@@ -1,0 +1,18 @@
+environment = "development"
+project_name = "ai-language-tutor"
+
+# Cloudflare Pages is free-tier compatible.
+enable_cloudflare_pages = true
+cloudflare_account_id   = "replace-with-cloudflare-account-id"
+production_branch       = "main"
+
+# Leave disabled until a Supabase organization and a database password are ready.
+enable_supabase           = false
+supabase_organization_id  = "replace-with-supabase-organization-id"
+supabase_database_password = "replace-with-a-long-random-password"
+supabase_region           = "sa-east-1"
+
+site_url = "http://localhost:3000"
+additional_redirect_urls = [
+  "http://localhost:3000/**",
+]

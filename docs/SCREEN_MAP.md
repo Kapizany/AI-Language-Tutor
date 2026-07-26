@@ -28,6 +28,7 @@ identidades visuais ou layouts proprietários:
 Landing
   → Demonstração
   → Cadastro
+  → Confirmação de email
   → Onboarding
   → Dashboard
   → Plano de estudo
@@ -44,10 +45,11 @@ Landing
 |---|---|---|
 | `/` | Apresentar valor e iniciar demonstração | Hero focado em ação |
 | `/demo` | Entregar três interações sem cadastro | Chat guiado |
-| `/signup` | Criar conta | Formulário curto e login social |
+| `/signup` | Criar conta | Formulário curto por email e senha |
 | `/login` | Retornar ao produto | Autenticação direta |
 | `/recover` | Recuperar acesso | Fluxo de uma tarefa |
-| `/onboarding` | Definir idioma, nível e meta | Etapas progressivas |
+| `/confirm-email` | Confirmar cadastro e reenviar link | Orientação de tarefa única |
+| `/onboarding` | Definir idioma, nível, objetivo e rotina | Quatro etapas progressivas |
 | `/dashboard` | Mostrar próxima melhor ação | Home personalizada |
 | `/plan` | Organizar semana e meta mensal | Agenda com progresso |
 | `/scenarios` | Escolher contexto de prática | Catálogo filtrável |

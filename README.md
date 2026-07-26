@@ -101,23 +101,42 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 ```
 
-Add the same values to the Cloudflare Pages build environment. The publishable
-key is safe to expose in the browser; database access is protected with
-Supabase Row Level Security.
+Add the same values as GitHub Actions variables in the `development`
+environment. The publishable key is safe to expose in the browser; database
+access is protected with Supabase Row Level Security.
 
 ## Database migrations
 
-Database changes live under `supabase/migrations`. To apply them:
+Database changes live under `supabase/migrations`. The Supabase GitHub
+integration watches the `main` branch and automatically applies new migrations
+to production. Its working directory is `.` because `supabase/` is at the
+repository root.
 
-```bash
-npx supabase login
-npx supabase link --project-ref <your-project-ref>
-npx supabase db push --dry-run
-npx supabase db push
-```
+Create a new timestamped migration, validate it locally, commit it, and merge it
+to `main`. Do not run `supabase db push` manually while the GitHub integration is
+processing the same commit.
 
 The initial migration creates user profiles, persistent onboarding preferences,
 automatic profile creation after signup, and per-user RLS policies.
+
+## Deployment
+
+The frontend is deployed to the existing Direct Upload Cloudflare Pages project
+by `.github/workflows/deploy-cloudflare-pages.yml`.
+
+The workflow runs on frontend changes pushed to `main` and can also be started
+manually. It audits production dependencies, runs lint and type-checking, builds
+the static application, and deploys `frontend/out`.
+
+Required GitHub environment configuration:
+
+```text
+Environment: development
+Secret: CLOUDFLARE_API_TOKEN
+Variables: CLOUDFLARE_ACCOUNT_ID
+           NEXT_PUBLIC_SUPABASE_URL
+           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+```
 
 ## Infrastructure
 

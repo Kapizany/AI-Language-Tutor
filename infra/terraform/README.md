@@ -60,3 +60,16 @@ to an encrypted remote backend with locking.
 
 Destroying a Supabase project deletes its database. Production resources should
 eventually use deletion protection and backups before Terraform manages them.
+
+## Deployment ownership
+
+Terraform owns the Cloudflare Pages and Supabase project resources and their
+platform settings. Application releases are intentionally handled separately:
+
+- the Supabase GitHub integration applies new files from
+  `supabase/migrations/` when they reach `main`;
+- GitHub Actions validates and deploys `frontend/out` to the existing Direct
+  Upload Cloudflare Pages project.
+
+Do not add schema SQL directly to Terraform and do not run concurrent manual and
+automatic migration deployments.

@@ -142,3 +142,32 @@ h1, h2, h3, .brand { font-family: "Manrope", sans-serif; }
 .app-loading{min-height:100vh;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--teal);background:var(--cream);font-weight:700}
 .app-loading svg{animation:loading-pulse 1.1s ease-in-out infinite}
 @keyframes loading-pulse{50%{transform:scale(1.15);opacity:.55}}
+
+.confirmation-page{min-height:100vh;background:radial-gradient(circle at 50% 15%,#edf8f4 0,transparent 34%),var(--cream)}
+.confirmation-card{width:min(520px,calc(100% - 32px));margin:42px auto;padding:38px 44px;border:1px solid rgba(15,107,101,.12);border-radius:25px;background:white;text-align:center;box-shadow:var(--shadow)}
+.confirmation-illustration{width:96px;height:96px;margin:0 auto 24px;border-radius:30px;display:grid;place-items:center;color:var(--teal);background:var(--teal-soft);position:relative;transform:rotate(-3deg)}
+.confirmation-illustration>span{transform:rotate(3deg)}
+.confirmation-illustration>i{position:absolute;right:-6px;bottom:4px;width:34px;height:34px;border:4px solid white;border-radius:50%;display:grid;place-items:center;color:white;background:var(--green);font-style:normal}
+.confirmation-card h1{margin:10px 0 8px;font-size:35px;letter-spacing:-.04em}
+.confirmation-card>p{margin:0;color:var(--muted)}
+.confirmation-email{display:block;margin:7px 0 27px;color:var(--teal);font-size:16px}
+.confirmation-instructions{padding:18px;border-radius:16px;background:#f7f8f5;text-align:left}
+.confirmation-instructions>div{display:flex;align-items:flex-start;gap:12px}
+.confirmation-instructions>div+div{margin-top:15px;padding-top:15px;border-top:1px solid var(--line)}
+.confirmation-instructions>div>span{width:25px;height:25px;flex:0 0 auto;border-radius:8px;display:grid;place-items:center;color:var(--teal);background:white;font-size:10px;font-weight:800}
+.confirmation-instructions p{margin:0;display:flex;flex-direction:column}
+.confirmation-instructions strong{font-size:12px}
+.confirmation-instructions small{margin-top:3px;color:var(--muted);font-size:10px;line-height:1.45}
+.confirmation-card>.button{margin-top:22px}
+.confirmation-resend{margin-top:18px;display:flex;justify-content:center;gap:5px;color:var(--muted);font-size:12px}
+.confirmation-resend button,.change-email{border:0;background:none;color:var(--teal);font-weight:800;cursor:pointer}
+.confirmation-resend button:disabled{color:#9ba7a3;cursor:not-allowed}
+.change-email{margin-top:11px;font-size:11px}
+.confirmation-card>aside{margin-top:25px;padding-top:18px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:center;gap:8px;color:var(--muted);font-size:10px;line-height:1.45}
+.confirmation-card>aside svg{flex:0 0 auto;color:var(--teal)}
+
+@media (max-width: 560px){
+  .confirmation-card{margin:20px auto;padding:30px 20px}
+  .confirmation-card h1{font-size:29px}
+  .confirmation-illustration{width:82px;height:82px;border-radius:25px}
+}

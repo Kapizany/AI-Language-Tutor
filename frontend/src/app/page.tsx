@@ -55,6 +55,7 @@ type ScreenId =
   | "signup"
   | "login"
   | "recover"
+  | "confirm-email"
   | "onboarding"
   | "dashboard"
   | "plan"
@@ -95,6 +96,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "signup", label: "Cadastro", icon: UserPlus, group: "Entrada" },
   { id: "login", label: "Login", icon: LogIn, group: "Entrada" },
   { id: "recover", label: "Recuperar senha", icon: Mail, group: "Entrada" },
+  { id: "confirm-email", label: "Confirmar email", icon: Mail, group: "Entrada" },
   { id: "onboarding", label: "Onboarding", icon: Target, group: "Entrada" },
   { id: "dashboard", label: "Início", icon: Home, group: "Produto" },
   { id: "plan", label: "Plano", icon: Map, group: "Produto" },
@@ -349,7 +351,7 @@ function AuthScreen({
           <h1>{copy.title}</h1><p>{copy.subtitle}</p>
           {mode === "signup" && <label>Nome<input required maxLength={100} autoComplete="name" value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="Como podemos chamar você?" /></label>}
           {mode !== "update" && <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({...form, email: event.target.value})} placeholder="voce@email.com" /></label>}
-          {mode !== "recover" && <label>Senha<div className="password-wrap"><input required minLength={8} type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder="Mínimo de 8 caracteres" /><LockKeyhole size={17}/></div></label>}
+          {mode !== "recover" && <label>Senha<div className="password-wrap"><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder="Mínimo de 8 caracteres" /><LockKeyhole size={17}/></div></label>}
           {mode === "login" && <button type="button" className="forgot" onClick={() => go("recover")}>Esqueci minha senha</button>}
           {mode === "signup" && <label className="check-label"><input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/> <span>Li e aceito os Termos e a Política de Privacidade.</span></label>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
@@ -357,6 +359,84 @@ function AuthScreen({
           <Button full type="submit" icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Aguarde..." : copy.action}</Button>
           {(mode === "signup" || mode === "login") && <p className="auth-switch">{mode === "signup" ? "Já tem uma conta?" : "Ainda não tem uma conta?"} <button type="button" onClick={() => go(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "Entrar" : "Criar conta"}</button></p>}
         </form>
+      </main>
+    </div>
+  );
+}
+
+function ConfirmEmail({
+  email,
+  go,
+  resend,
+  checkConfirmation,
+}: {
+  email: string;
+  go: (id: ScreenId) => void;
+  resend: (email: string) => Promise<AuthFeedback>;
+  checkConfirmation: () => Promise<AuthFeedback>;
+}) {
+  const [cooldown, setCooldown] = useState(0);
+  const [feedback, setFeedback] = useState<AuthFeedback>({});
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(() => setCooldown(cooldown - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
+
+  const resendEmail = async () => {
+    if (!email || cooldown > 0) return;
+    setFeedback({});
+    const result = await resend(email);
+    setFeedback(result);
+    if (!result.error) setCooldown(30);
+  };
+
+  const verify = async () => {
+    setChecking(true);
+    setFeedback(await checkConfirmation());
+    setChecking(false);
+  };
+
+  const maskedEmail = email
+    ? email.replace(/^(.{2}).*(@.*)$/, "$1••••$2")
+    : "seu endereço de email";
+
+  return (
+    <div className="confirmation-page">
+      <header className="simple-header">
+        <Brand/>
+        <button onClick={() => go("login")}>Já tenho uma conta</button>
+      </header>
+      <main className="confirmation-card">
+        <div className="confirmation-illustration">
+          <span><Mail size={38}/></span>
+          <i><Check size={17}/></i>
+        </div>
+        <span className="eyebrow">SÓ FALTA UM PASSO</span>
+        <h1>Confirme seu email</h1>
+        <p>Se este for um cadastro novo, enviaremos um link para</p>
+        <strong className="confirmation-email">{maskedEmail}</strong>
+        <div className="confirmation-instructions">
+          <div><span>1</span><p><strong>Abra sua caixa de entrada</strong><small>Procure pelo email do Lume. Se você já possui conta, use o login ou recupere sua senha.</small></p></div>
+          <div><span>2</span><p><strong>Clique em “Confirmar email”</strong><small>Você voltará automaticamente para criar seu plano.</small></p></div>
+        </div>
+        {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
+        {feedback.success && <div className="form-message form-success" role="status">{feedback.success}</div>}
+        <Button full onClick={verify} icon={checking ? undefined : <CheckCircle2 size={18}/>}>
+          {checking ? "Verificando..." : "Já confirmei meu email"}
+        </Button>
+        <div className="confirmation-resend">
+          <span>Não recebeu?</span>
+          <button disabled={!email || cooldown > 0} onClick={resendEmail}>
+            {cooldown > 0 ? `Reenviar em ${cooldown}s` : "Reenviar email"}
+          </button>
+        </div>
+        <button className="change-email" onClick={() => go("signup")}>
+          Informei o email errado
+        </button>
+        <aside><ShieldCheck size={17}/><span>O link expira por segurança. Verifique também spam e promoções.</span></aside>
       </main>
     </div>
   );
@@ -773,7 +853,7 @@ function PrototypeNavigator({
       </button>
       {open && (
         <div className="prototype-panel">
-          <div className="prototype-head"><div><strong>Protótipo navegável</strong><span>16 telas do produto</span></div><button onClick={() => setOpen(false)}><X/></button></div>
+          <div className="prototype-head"><div><strong>Protótipo navegável</strong><span>{screens.length} telas do produto</span></div><button onClick={() => setOpen(false)}><X/></button></div>
           {["Entrada","Produto","Progresso","Conta"].map((group)=><div className="prototype-group" key={group}><span>{group}</span>{screens.filter((screen)=>screen.group===group).map(({id,label,icon:Icon})=><button key={id} className={current===id?"active":""} onClick={()=>{go(id);setOpen(false)}}><Icon size={17}/>{label}{current===id&&<Check size={15}/>}</button>)}</div>)}
           <div className="prototype-arrows"><button disabled={currentIndex===0} onClick={()=>go(screens[Math.max(0,currentIndex-1)].id)}><ArrowLeft/> Anterior</button><button disabled={currentIndex===screens.length-1} onClick={()=>go(screens[Math.min(screens.length-1,currentIndex+1)].id)}>Próxima <ArrowRight/></button></div>
         </div>
@@ -788,6 +868,7 @@ export default function ProductPrototype() {
   const [authLoading, setAuthLoading] = useState(true);
   const [displayName, setDisplayName] = useState("Aluno");
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState("");
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -803,12 +884,25 @@ export default function ProductPrototype() {
 
       const currentSession = data.session;
       setSession(currentSession);
+      const storedPendingEmail = window.sessionStorage.getItem("lume:pending-email") || "";
+      const isEmailConfirmation = window.location.hash.includes("type=signup") || window.location.search.includes("type=signup");
+      const isPasswordReset = window.location.hash.includes("type=recovery") || window.location.search.includes("type=recovery");
+      setPendingEmail(storedPendingEmail);
       if (currentSession) {
         setDisplayName(currentSession.user.user_metadata.display_name || currentSession.user.email?.split("@")[0] || "Aluno");
       }
 
       const fromHash = window.location.hash.replace("#/", "") as ScreenId;
-      if (screens.some((item) => item.id === fromHash)) {
+      if (currentSession && isPasswordReset) {
+        setPasswordRecovery(true);
+        setScreen("recover");
+        window.history.replaceState(null, "", "#/recover");
+      } else if (currentSession && (storedPendingEmail || isEmailConfirmation)) {
+        window.sessionStorage.removeItem("lume:pending-email");
+        setPendingEmail("");
+        setScreen("onboarding");
+        window.history.replaceState(null, "", "#/onboarding");
+      } else if (screens.some((item) => item.id === fromHash)) {
         const protectedDestination = appScreens.has(fromHash) || fromHash === "onboarding";
         setScreen(protectedDestination && !currentSession ? "login" : fromHash);
       }
@@ -826,6 +920,13 @@ export default function ProductPrototype() {
         setScreen("recover");
         window.history.replaceState(null, "", "#/recover");
       }
+      const isEmailConfirmation = window.location.hash.includes("type=signup") || window.location.search.includes("type=signup");
+      if (event === "SIGNED_IN" && nextSession && (window.sessionStorage.getItem("lume:pending-email") || isEmailConfirmation)) {
+        window.sessionStorage.removeItem("lume:pending-email");
+        setPendingEmail("");
+        setScreen("onboarding");
+        window.history.replaceState(null, "", "#/onboarding");
+      }
     });
 
     return () => {
@@ -842,6 +943,10 @@ export default function ProductPrototype() {
 
   const go = (id: ScreenId) => {
     const destination = (appScreens.has(id) || id === "onboarding") && !session ? "login" : id;
+    if (screen === "confirm-email" && (destination === "login" || destination === "signup")) {
+      window.sessionStorage.removeItem("lume:pending-email");
+      setPendingEmail("");
+    }
     navigate(destination);
   };
 
@@ -861,22 +966,29 @@ export default function ProductPrototype() {
 
     if (mode === "recover") {
       const { error } = await supabase.auth.resetPasswordForEmail(form.email, {
-        redirectTo: `${window.location.origin}/#/login`,
+        redirectTo: window.location.origin,
       });
       return error
         ? { error: error.message }
-        : { success: "Enviamos o link de recuperação. Verifique sua caixa de entrada." };
+        : { success: "Se existir uma conta com esse email, enviaremos um link de recuperação." };
     }
 
     if (mode === "signup") {
       const { data, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
-        options: { data: { display_name: form.name.trim() } },
+        options: {
+          data: { display_name: form.name.trim() },
+          emailRedirectTo: window.location.origin,
+        },
       });
       if (error) return { error: error.message };
       if (!data.session) {
-        return { success: "Conta criada. Confirme seu e-mail para continuar." };
+        const normalizedEmail = form.email.trim().toLowerCase();
+        window.sessionStorage.setItem("lume:pending-email", normalizedEmail);
+        setPendingEmail(normalizedEmail);
+        navigate("confirm-email");
+        return {};
       }
       setSession(data.session);
       setDisplayName(form.name.trim() || "Aluno");
@@ -901,6 +1013,37 @@ export default function ProductPrototype() {
     if (profileError) return { error: "Login realizado, mas não foi possível carregar seu perfil." };
     if (profile?.display_name) setDisplayName(profile.display_name);
     navigate(profile?.onboarding_completed ? "dashboard" : "onboarding");
+    return {};
+  };
+
+  const resendConfirmation = async (email: string): Promise<AuthFeedback> => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return { error: "A autenticação ainda não está configurada." };
+
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+
+    return error
+      ? { error: error.message }
+      : { success: "Um novo link foi enviado. Verifique sua caixa de entrada." };
+  };
+
+  const checkConfirmation = async (): Promise<AuthFeedback> => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return { error: "A autenticação ainda não está configurada." };
+    const { data } = await supabase.auth.getSession();
+
+    if (!data.session) {
+      return { error: "Ainda não identificamos a confirmação. Abra o link no mesmo navegador e tente novamente." };
+    }
+
+    window.sessionStorage.removeItem("lume:pending-email");
+    setPendingEmail("");
+    setSession(data.session);
+    navigate("onboarding");
     return {};
   };
 
@@ -953,6 +1096,7 @@ export default function ProductPrototype() {
       case "signup": return <AuthScreen mode="signup" go={go} submit={submitAuth}/>;
       case "login": return <AuthScreen mode="login" go={go} submit={submitAuth}/>;
       case "recover": return <AuthScreen mode={passwordRecovery ? "update" : "recover"} go={go} submit={submitAuth}/>;
+      case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding}/>;
       case "dashboard": return <Dashboard go={go} displayName={displayName}/>;
       case "plan": return <Plan go={go}/>;

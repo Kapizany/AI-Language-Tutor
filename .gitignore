@@ -149,6 +149,8 @@ activemq-data/
 
 # Environments
 .env
+.env.local
+.env.*.local
 .envrc
 .venv
 env/
@@ -214,6 +216,15 @@ crash.*.log
 # Local project notes and private planning documents
 .local/
 
+# OpenAI Sites metadata (the project deploys only to Cloudflare)
+.openai/
+
+# Node.js and Next.js generated files
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
 # Visual Studio Code
 #   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
@@ -236,3 +247,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.vinext/
+.wrangler/
+
+# Open AI
+.openai/
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

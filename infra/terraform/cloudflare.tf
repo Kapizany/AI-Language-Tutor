@@ -7,8 +7,8 @@ resource "cloudflare_pages_project" "web" {
 
   build_config = {
     build_command   = "npm run build"
-    destination_dir = "dist"
-    root_dir        = ""
+    destination_dir = "out"
+    root_dir        = "frontend"
     build_caching   = true
   }
 

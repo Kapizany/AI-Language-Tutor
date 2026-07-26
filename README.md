@@ -71,3 +71,61 @@ These agents collaborate to deliver contextual, personalized, and continuously i
 ## Goal
 
 The ultimate goal of AI Language Tutor is to build an AI-powered personal language teacher that feels like interacting with a real human tutor—one that remembers every conversation, understands each learner's objectives, continuously adapts its teaching strategy, and helps users achieve fluency through natural, engaging, and personalized interactions.
+
+## Repository Structure
+
+```text
+.
+├── backend/          # FastAPI application (planned)
+├── frontend/         # Next.js web application
+├── infra/terraform/  # Supabase and Cloudflare infrastructure
+└── docs/             # Product and screen documentation
+```
+
+## Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+The production build is exported to `frontend/out` and is deployable to
+Cloudflare Pages.
+
+The frontend requires these public build variables:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+```
+
+Add the same values to the Cloudflare Pages build environment. The publishable
+key is safe to expose in the browser; database access is protected with
+Supabase Row Level Security.
+
+## Database migrations
+
+Database changes live under `supabase/migrations`. To apply them:
+
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase db push --dry-run
+npx supabase db push
+```
+
+The initial migration creates user profiles, persistent onboarding preferences,
+automatic profile creation after signup, and per-user RLS policies.
+
+## Infrastructure
+
+```bash
+terraform -chdir=infra/terraform init
+terraform -chdir=infra/terraform plan
+terraform -chdir=infra/terraform apply
+```
+
+Sensitive Terraform variables, plans, state files, and local provider data are
+ignored by Git.

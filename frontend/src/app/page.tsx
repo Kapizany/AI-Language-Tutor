@@ -48,6 +48,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { onboardingStorageKeys, resolveDestination, scenarioStorageKey } from "@/lib/navigation";
 
 type ScreenId =
   | "landing"
@@ -87,7 +88,52 @@ type OnboardingData = {
   targetLanguage: "en" | "es" | "fr" | "it";
   currentLevel: "A1" | "A2" | "B1" | "B2" | "C1" | "unknown";
   learningGoal: "travel" | "career" | "conversation" | "exam";
-  studyMinutesPerDay: 10 | 20 | 30 | 45;
+  studyMinutesPerDay: 10 | 20 | 30 | 60;
+};
+
+type LearnerPreferences = OnboardingData & {
+  studyDaysPerWeek: number;
+};
+
+type LearnerPreferencesRow = {
+  target_language: OnboardingData["targetLanguage"];
+  current_level: OnboardingData["currentLevel"];
+  learning_goal: OnboardingData["learningGoal"];
+  study_minutes_per_day: OnboardingData["studyMinutesPerDay"];
+  study_days_per_week: number;
+};
+
+const mapLearnerPreferences = (row: LearnerPreferencesRow): LearnerPreferences => ({
+  targetLanguage: row.target_language,
+  currentLevel: row.current_level,
+  learningGoal: row.learning_goal,
+  studyMinutesPerDay: row.study_minutes_per_day,
+  studyDaysPerWeek: row.study_days_per_week,
+});
+
+const languageDetails: Record<OnboardingData["targetLanguage"], { flag: string; name: string }> = {
+  en: { flag: "🇺🇸", name: "Inglês" },
+  es: { flag: "🇪🇸", name: "Espanhol" },
+  fr: { flag: "🇫🇷", name: "Francês" },
+  it: { flag: "🇮🇹", name: "Italiano" },
+};
+
+const levelLabels: Record<OnboardingData["currentLevel"], string> = {
+  unknown: "Nível ainda não definido",
+  A1: "A1 · Iniciante",
+  A2: "A2 · Básico",
+  B1: "B1 · Intermediário",
+  B2: "B2 · Independente",
+  C1: "C1 · Avançado",
+};
+
+const selectableLevels: OnboardingData["currentLevel"][] = ["unknown", "A1", "A2", "B1", "B2"];
+
+const goalLabels: Record<OnboardingData["learningGoal"], string> = {
+  travel: "Viagens",
+  career: "Carreira",
+  conversation: "Conversação",
+  exam: "Preparação para provas",
 };
 
 const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: string }> = [
@@ -123,9 +169,9 @@ const appScreens = new Set<ScreenId>([
   "privacy",
 ]);
 
-function Brand({ compact = false }: { compact?: boolean }) {
+function Brand({ compact = false, onClick }: { compact?: boolean; onClick?: () => void }) {
   return (
-    <button className="brand" aria-label="Ir para início" data-compact={compact}>
+    <button className="brand" aria-label="Ir para início" data-compact={compact} onClick={onClick}>
       <span className="brand-mark">
         <Sparkles size={compact ? 17 : 20} />
       </span>
@@ -141,6 +187,7 @@ function Button({
   onClick,
   type = "button",
   full = false,
+  disabled = false,
 }: {
   children: React.ReactNode;
   variant?: "primary" | "secondary" | "ghost" | "dark" | "danger";
@@ -148,12 +195,14 @@ function Button({
   onClick?: () => void;
   type?: "button" | "submit";
   full?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type={type}
       className={`button button-${variant}${full ? " button-full" : ""}`}
       onClick={onClick}
+      disabled={disabled}
     >
       {children}
       {icon}
@@ -195,13 +244,14 @@ function Stat({
 }
 
 function Landing({ go }: { go: (id: ScreenId) => void }) {
+  const showDetails = () => document.getElementById("como-funciona")?.scrollIntoView({ behavior: "smooth" });
   return (
     <main className="landing">
       <header className="public-header">
-        <Brand />
+        <Brand onClick={() => go("landing")} />
         <nav>
-          <button onClick={() => go("scenarios")}>Como funciona</button>
-          <button onClick={() => go("plan")}>Plano de estudo</button>
+          <button onClick={showDetails}>Como funciona</button>
+          <button onClick={showDetails}>Plano de estudo</button>
         </nav>
         <div className="header-actions">
           <Button variant="ghost" onClick={() => go("login")}>Entrar</Button>
@@ -257,7 +307,7 @@ function Landing({ go }: { go: (id: ScreenId) => void }) {
         </div>
       </section>
 
-      <section className="value-strip">
+      <section className="value-strip" id="como-funciona">
         <article><MessageCircle /><strong>Converse de verdade</strong><span>Cenários que você vai usar.</span></article>
         <article><WandSparkles /><strong>Correção na hora</strong><span>Clara, gentil e contextual.</span></article>
         <article><Map /><strong>Plano só seu</strong><span>Adaptado à sua rotina.</span></article>
@@ -270,7 +320,7 @@ function Landing({ go }: { go: (id: ScreenId) => void }) {
 function Demo({ go }: { go: (id: ScreenId) => void }) {
   return (
     <div className="public-shell demo-shell">
-      <header className="simple-header"><Brand /><span className="step-label">Demonstração · 2 de 3</span><button onClick={() => go("landing")}><X /></button></header>
+      <header className="simple-header"><Brand onClick={() => go("landing")} /><span className="step-label">Demonstração · 2 de 3</span><button onClick={() => go("landing")}><X /></button></header>
       <main className="demo-main">
         <div className="demo-context">
           <span className="scenario-icon"><Coffee /></span>
@@ -278,20 +328,20 @@ function Demo({ go }: { go: (id: ScreenId) => void }) {
           <span className="level-chip">A2</span>
         </div>
         <div className="chat-stream">
-          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Good morning! What can I get for you today?</span><button><Volume2 size={15} /> Ouvir</button></div></div>
+          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Good morning! What can I get for you today?</span><button disabled title="Áudio disponível em uma etapa futura"><Volume2 size={15} /> Ouvir</button></div></div>
           <div className="chat-message user-message"><div><span>I want one coffee with milk, please.</span><small>Agora</small></div></div>
           <div className="inline-feedback">
             <div className="feedback-title"><CheckCircle2 /><strong>Boa resposta!</strong><span>1 ajuste</span></div>
             <div className="compare"><del>I want one coffee</del><ArrowRight size={15}/><ins>I’d like a coffee</ins></div>
             <p>Em pedidos, <strong>“I’d like...”</strong> soa mais natural e educado.</p>
-            <button>Tentar novamente <RotateCcw size={14} /></button>
+            <button disabled title="A demonstração interativa será conectada ao tutor de IA">Tentar novamente <RotateCcw size={14} /></button>
           </div>
           <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Great choice! Would you like it hot or iced?</span></div></div>
         </div>
         <div className="demo-composer">
-          <button className="mic-button"><Mic2 /></button>
+          <button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2 /></button>
           <input aria-label="Sua resposta" placeholder="Digite sua resposta em inglês..." />
-          <button className="send-button"><ArrowRight /></button>
+          <button className="send-button" disabled title="A demonstração interativa será conectada ao tutor de IA"><ArrowRight /></button>
         </div>
         <small className="demo-note">Você tem mais 1 interação grátis</small>
       </main>
@@ -336,7 +386,7 @@ function AuthScreen({
   return (
     <div className="auth-layout">
       <aside className="auth-aside">
-        <Brand />
+        <Brand onClick={() => go("landing")} />
         <div>
           <span className="eyebrow light"><Heart size={16}/> Aprendizado sem pressão</span>
           <h2>Seu próximo idioma começa com uma conversa.</h2>
@@ -356,7 +406,7 @@ function AuthScreen({
           {mode === "signup" && <label className="check-label"><input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/> <span>Li e aceito os Termos e a Política de Privacidade.</span></label>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
           {feedback.success && <div className="form-message form-success" role="status">{feedback.success}</div>}
-          <Button full type="submit" icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Aguarde..." : copy.action}</Button>
+          <Button full type="submit" disabled={submitting} icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Aguarde..." : copy.action}</Button>
           {(mode === "signup" || mode === "login") && <p className="auth-switch">{mode === "signup" ? "Já tem uma conta?" : "Ainda não tem uma conta?"} <button type="button" onClick={() => go(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "Entrar" : "Criar conta"}</button></p>}
         </form>
       </main>
@@ -378,6 +428,7 @@ function ConfirmEmail({
   const [cooldown, setCooldown] = useState(0);
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [checking, setChecking] = useState(false);
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -386,11 +437,13 @@ function ConfirmEmail({
   }, [cooldown]);
 
   const resendEmail = async () => {
-    if (!email || cooldown > 0) return;
+    if (!email || cooldown > 0 || resending) return;
+    setResending(true);
     setFeedback({});
     const result = await resend(email);
     setFeedback(result);
-    if (!result.error) setCooldown(30);
+    if (!result.error) setCooldown(60);
+    setResending(false);
   };
 
   const verify = async () => {
@@ -406,7 +459,7 @@ function ConfirmEmail({
   return (
     <div className="confirmation-page">
       <header className="simple-header">
-        <Brand/>
+        <Brand onClick={() => go("landing")}/>
         <button onClick={() => go("login")}>Já tenho uma conta</button>
       </header>
       <main className="confirmation-card">
@@ -424,13 +477,13 @@ function ConfirmEmail({
         </div>
         {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
         {feedback.success && <div className="form-message form-success" role="status">{feedback.success}</div>}
-        <Button full onClick={verify} icon={checking ? undefined : <CheckCircle2 size={18}/>}>
+        <Button full onClick={verify} disabled={checking} icon={checking ? undefined : <CheckCircle2 size={18}/>}>
           {checking ? "Verificando..." : "Já confirmei meu email"}
         </Button>
         <div className="confirmation-resend">
           <span>Não recebeu?</span>
-          <button disabled={!email || cooldown > 0} onClick={resendEmail}>
-            {cooldown > 0 ? `Reenviar em ${cooldown}s` : "Reenviar email"}
+          <button disabled={!email || cooldown > 0 || resending} onClick={resendEmail}>
+            {resending ? "Reenviando..." : cooldown > 0 ? `Reenviar em ${cooldown}s` : "Reenviar email"}
           </button>
         </div>
         <button className="change-email" onClick={() => go("signup")}>
@@ -444,16 +497,23 @@ function ConfirmEmail({
 
 function Onboarding({
   complete,
+  go,
+  initialPreferences,
+  userId,
 }: {
   complete: (data: OnboardingData) => Promise<AuthFeedback>;
+  go: (id: ScreenId) => void;
+  initialPreferences: LearnerPreferences | null;
+  userId: string;
 }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState<OnboardingData>({
-    targetLanguage: "en",
-    currentLevel: "unknown",
-    learningGoal: "conversation",
-    studyMinutesPerDay: 20,
+    targetLanguage: initialPreferences?.targetLanguage || "en",
+    currentLevel: initialPreferences?.currentLevel || "unknown",
+    learningGoal: initialPreferences?.learningGoal || "conversation",
+    studyMinutesPerDay: initialPreferences?.studyMinutesPerDay || 20,
   });
+  const [draftRestored, setDraftRestored] = useState(false);
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [submitting, setSubmitting] = useState(false);
   const questions = [
@@ -462,19 +522,51 @@ function Onboarding({
     { title: "Qual é seu principal objetivo?", subtitle: "Usaremos isso para priorizar cenários e vocabulário." },
     { title: "Quanto tempo cabe na sua rotina?", subtitle: "Uma meta realista funciona melhor do que uma meta perfeita." },
   ];
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const keys = onboardingStorageKeys(userId);
+      const savedDraft = window.sessionStorage.getItem(keys.draft);
+      const savedStep = Number(window.sessionStorage.getItem(keys.step));
+      if (savedDraft) {
+        try {
+          setData(JSON.parse(savedDraft) as OnboardingData);
+        } catch {
+          window.sessionStorage.removeItem(keys.draft);
+        }
+      }
+      if (savedStep >= 1 && savedStep <= 4) setStep(savedStep);
+      setDraftRestored(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+    const keys = onboardingStorageKeys(userId);
+    window.sessionStorage.setItem(keys.draft, JSON.stringify(data));
+    window.sessionStorage.setItem(keys.step, String(step));
+  }, [data, draftRestored, step, userId]);
+
   const next = async () => {
     if (step < 4) {
       setStep(step + 1);
       return;
     }
     setSubmitting(true);
-    setFeedback(await complete(data));
+    const result = await complete(data);
+    setFeedback(result);
+    if (!result.error) {
+      const keys = onboardingStorageKeys(userId);
+      window.sessionStorage.removeItem(keys.draft);
+      window.sessionStorage.removeItem(keys.step);
+    }
     setSubmitting(false);
   };
 
   return (
     <div className="onboarding-shell">
-      <header className="simple-header"><Brand/><span className="step-label">Passo {step} de 4</span><span /></header>
+      <header className="simple-header"><Brand onClick={() => go("landing")}/><span className="step-label">Passo {step} de 4</span><span /></header>
       <div className="onboarding-progress">{[1,2,3,4].map((item) => <i key={item} className={item <= step ? "complete" : ""}/>)}</div>
       <main className="onboarding-main">
         <span className="question-count">{String(step).padStart(2, "0")}</span>
@@ -499,7 +591,6 @@ function Onboarding({
             ["A2 · Básico", "Lido com situações cotidianas", "A2"],
             ["B1 · Intermediário", "Consigo manter conversas", "B1"],
             ["B2 · Independente", "Converso com boa fluência", "B2"],
-            ["C1 · Avançado", "Uso o idioma com autonomia", "C1"],
           ] as const).map(([name, description, value]) => (
             <button key={value} className={data.currentLevel === value ? "selected" : ""} onClick={() => setData({...data, currentLevel: value})}>
               <div><strong>{name}</strong><small>{description}</small></div>{data.currentLevel === value && <CheckCircle2/>}
@@ -519,7 +610,7 @@ function Onboarding({
           ))}
         </div>}
         {step === 4 && <div className="language-grid choice-grid">
-          {([10, 20, 30, 45] as const).map((minutes) => (
+          {([10, 20, 30, 60] as const).map((minutes) => (
             <button key={minutes} className={data.studyMinutesPerDay === minutes ? "selected" : ""} onClick={() => setData({...data, studyMinutesPerDay: minutes})}>
               <div><strong>{minutes} minutos por dia</strong><small>{minutes <= 10 ? "Uma rotina leve" : minutes <= 20 ? "Recomendado para consistência" : "Para avançar mais rápido"}</small></div>{data.studyMinutesPerDay === minutes && <CheckCircle2/>}
             </button>
@@ -527,31 +618,44 @@ function Onboarding({
         </div>}
         {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
         <div className="onboarding-actions">
-          <Button variant="ghost" onClick={() => setStep(Math.max(1, step - 1))}><ArrowLeft size={18}/> Voltar</Button>
-          <Button onClick={next} icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Salvando..." : step === 4 ? "Criar meu plano" : "Continuar"}</Button>
+          <Button variant="ghost" disabled={step === 1 || submitting} onClick={() => setStep(Math.max(1, step - 1))}><ArrowLeft size={18}/> Voltar</Button>
+          <Button onClick={next} disabled={submitting} icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Salvando..." : step === 4 ? "Criar meu plano" : "Continuar"}</Button>
         </div>
       </main>
     </div>
   );
 }
 
-function AppHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+function AppHeader({
+  title,
+  subtitle,
+  displayName,
+  preferences,
+}: {
+  title: string;
+  subtitle?: string;
+  displayName?: string;
+  preferences?: LearnerPreferences | null;
+}) {
+  const language = preferences ? languageDetails[preferences.targetLanguage] : languageDetails.en;
   return (
     <header className="app-header">
       <div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       <div className="app-header-tools">
-        <button className="language-switch"><span>🇺🇸</span> Inglês <ChevronRight size={15}/></button>
-        <button className="icon-button"><Bell size={20}/><i/></button>
-        <div className="user-avatar">CA</div>
+        <button className="language-switch" disabled title="A troca de idioma ficará disponível nas configurações"><span>{language.flag}</span> {language.name}</button>
+        <button className="icon-button" disabled title="Notificações em breve"><Bell size={20}/></button>
+        <div className="user-avatar">{(displayName || "Aluno").slice(0, 2).toUpperCase()}</div>
       </div>
     </header>
   );
 }
 
-function Dashboard({ go, displayName }: { go: (id: ScreenId) => void; displayName: string }) {
+function Dashboard({ go, displayName, preferences, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; startScenario: (scenario: Scenario) => void }) {
+  const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : "A1";
+  const language = preferences ? languageDetails[preferences.targetLanguage].name : "Inglês";
   return (
     <div className="screen-content">
-      <AppHeader title={`Olá, ${displayName}!`} subtitle="Um pequeno passo hoje mantém seu idioma em movimento."/>
+      <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences}/>
       <div className="streak-banner">
         <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>7 dias</strong></div></div>
         <div className="week-dots">{["S","T","Q","Q","S","S","D"].map((day, index)=><div key={`${day}-${index}`} className={index < 6 ? "done" : ""}><span>{day}</span><i>{index < 6 ? <Check size={12}/> : ""}</i></div>)}</div>
@@ -562,7 +666,7 @@ function Dashboard({ go, displayName }: { go: (id: ScreenId) => void; displayNam
           <div className="section-heading"><div><span className="eyebrow">PRÓXIMA ATIVIDADE</span><h2>Continue seu plano</h2></div><button onClick={() => go("plan")}>Ver plano completo <ArrowRight size={16}/></button></div>
           <article className="next-lesson">
             <div className="lesson-visual"><div className="coffee-cup">☕</div><span>Conversação</span></div>
-            <div className="lesson-copy"><span className="level-chip">A2 · COTIDIANO</span><h3>Um café, por favor</h3><p>Pratique pedidos, tamanhos e preferências em uma cafeteria.</p><div className="lesson-meta"><span><Clock3 size={16}/> 10 min</span><span><MessageCircle size={16}/> Conversa guiada</span></div><Button onClick={() => go("conversation")} icon={<Play size={17} fill="currentColor"/>}>Começar atividade</Button></div>
+            <div className="lesson-copy"><span className="level-chip">{level} · COTIDIANO</span><h3>Um café, por favor</h3><p>Pratique pedidos, tamanhos e preferências em {language}.</p><div className="lesson-meta"><span><Clock3 size={16}/> {preferences?.studyMinutesPerDay || 10} min</span><span><MessageCircle size={16}/> Conversa guiada</span></div><Button onClick={() => startScenario(scenarioData[0])} icon={<Play size={17} fill="currentColor"/>}>Começar atividade</Button></div>
             <ProgressRing value={35} label="semana"/>
           </article>
           <div className="section-heading compact"><h2>Pratique do seu jeito</h2></div>
@@ -581,7 +685,7 @@ function Dashboard({ go, displayName }: { go: (id: ScreenId) => void; displayNam
   );
 }
 
-function Plan({ go }: { go: (id: ScreenId) => void }) {
+function Plan({ go, displayName, preferences, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; startScenario: (scenario: Scenario) => void }) {
   const days = [
     { day: "SEG", date: "20", done: true, title: "Apresentações", type: "Conversa", time: "10 min" },
     { day: "TER", date: "21", done: true, title: "Revisão de vocabulário", type: "Revisão", time: "8 min" },
@@ -591,11 +695,11 @@ function Plan({ go }: { go: (id: ScreenId) => void }) {
   ];
   return (
     <div className="screen-content">
-      <AppHeader title="Seu plano de estudo" subtitle="Semana de 20 a 26 de julho"/>
+      <AppHeader title="Seu plano de estudo" subtitle="Sua rotina personalizada" displayName={displayName} preferences={preferences}/>
       <div className="plan-overview">
-        <div><span className="eyebrow">META DO MÊS</span><h2>Conversar com confiança em situações cotidianas</h2><p>Baseado no seu nível A2 e em 20 minutos por dia.</p></div>
+        <div><span className="eyebrow">META DO MÊS</span><h2>{preferences ? goalLabels[preferences.learningGoal] : "Conversação"}</h2><p>Baseado no seu nível {preferences ? levelLabels[preferences.currentLevel] : "inicial"} e em {preferences?.studyMinutesPerDay || 20} minutos por dia.</p></div>
         <div className="plan-progress"><strong>68%</strong><div><i/></div><span>8h 10min de 12h</span></div>
-        <button><Settings size={18}/> Ajustar plano</button>
+        <button onClick={() => go("profile")}><Settings size={18}/> Ajustar plano</button>
       </div>
       <div className="week-layout">
         <section className="week-list">
@@ -605,7 +709,7 @@ function Plan({ go }: { go: (id: ScreenId) => void }) {
               <div className="date-block"><span>{item.day}</span><strong>{item.date}</strong></div>
               <span className="timeline-dot">{item.done ? <Check size={16}/> : item.active ? <Play size={15}/> : ""}</span>
               <div className="day-copy"><span>{item.type}</span><h3>{item.title}</h3><small><Clock3 size={14}/> {item.time}</small></div>
-              {item.active ? <Button onClick={() => go("conversation")}>Começar</Button> : <button className="more-button">•••</button>}
+              {item.active ? <Button onClick={() => startScenario(scenarioData[0])}>Começar</Button> : <button className="more-button" disabled title="Atividade ainda indisponível">•••</button>}
             </article>
           ))}
         </section>
@@ -618,68 +722,129 @@ function Plan({ go }: { go: (id: ScreenId) => void }) {
   );
 }
 
-const scenarioData = [
-  { icon: Coffee, title: "Na cafeteria", desc: "Faça pedidos e fale sobre preferências.", level: "A2", time: "10 min", color: "coral" },
-  { icon: Plane, title: "No aeroporto", desc: "Check-in, bagagem e orientações.", level: "A2", time: "12 min", color: "blue" },
-  { icon: BriefcaseBusiness, title: "Entrevista de emprego", desc: "Conte sua experiência e objetivos.", level: "B1", time: "15 min", color: "teal" },
-  { icon: Utensils, title: "No restaurante", desc: "Reserve, escolha e peça a conta.", level: "A2", time: "10 min", color: "amber" },
-  { icon: Globe2, title: "Conversa livre", desc: "Escolha qualquer assunto com o tutor.", level: "A1–B2", time: "Livre", color: "purple" },
-  { icon: Headphones, title: "Reunião de trabalho", desc: "Opine, concorde e peça esclarecimentos.", level: "B1", time: "15 min", color: "navy" },
+type Scenario = {
+  id: string;
+  icon: IconType;
+  title: string;
+  desc: string;
+  objective: string;
+  category: "Cotidiano" | "Profissional" | "Viagem";
+  level: string;
+  time: string;
+  color: string;
+};
+
+const scenarioData: Scenario[] = [
+  { id: "coffee", icon: Coffee, title: "Na cafeteria", desc: "Faça pedidos e fale sobre preferências.", objective: "Faça um pedido completo e pergunte o preço.", category: "Cotidiano", level: "A2", time: "10 min", color: "coral" },
+  { id: "airport", icon: Plane, title: "No aeroporto", desc: "Check-in, bagagem e orientações.", objective: "Faça o check-in e confirme o portão de embarque.", category: "Viagem", level: "A2", time: "12 min", color: "blue" },
+  { id: "interview", icon: BriefcaseBusiness, title: "Entrevista de emprego", desc: "Conte sua experiência e objetivos.", objective: "Apresente sua experiência e responda sobre seus objetivos.", category: "Profissional", level: "B1", time: "15 min", color: "teal" },
+  { id: "restaurant", icon: Utensils, title: "No restaurante", desc: "Reserve, escolha e peça a conta.", objective: "Escolha um prato, faça perguntas e peça a conta.", category: "Cotidiano", level: "A2", time: "10 min", color: "amber" },
+  { id: "free", icon: Globe2, title: "Conversa livre", desc: "Escolha qualquer assunto com o tutor.", objective: "Mantenha uma conversa livre no idioma estudado.", category: "Cotidiano", level: "A1–B2", time: "Livre", color: "purple" },
+  { id: "meeting", icon: Headphones, title: "Reunião de trabalho", desc: "Opine, concorde e peça esclarecimentos.", objective: "Compartilhe uma opinião e peça um esclarecimento.", category: "Profissional", level: "B1", time: "15 min", color: "navy" },
 ];
 
-function Scenarios({ go }: { go: (id: ScreenId) => void }) {
+const scenarioOpenings: Record<OnboardingData["targetLanguage"], Record<string, string>> = {
+  en: {
+    coffee: "Good afternoon! Welcome. What can I get started for you?",
+    airport: "Good morning! May I see your passport and booking confirmation?",
+    interview: "Welcome! Could you start by telling me a little about yourself?",
+    restaurant: "Good evening! Do you have a reservation?",
+    free: "Hello! What would you like to talk about today?",
+    meeting: "Thanks for joining. What is your view on today’s proposal?",
+  },
+  es: {
+    coffee: "¡Buenas tardes! ¿Qué te gustaría pedir?",
+    airport: "¡Buenos días! ¿Puedo ver tu pasaporte y tu reserva?",
+    interview: "¡Bienvenido! ¿Puedes contarme un poco sobre ti?",
+    restaurant: "¡Buenas noches! ¿Tienes una reserva?",
+    free: "¡Hola! ¿De qué te gustaría hablar hoy?",
+    meeting: "Gracias por participar. ¿Qué opinas de la propuesta de hoy?",
+  },
+  fr: {
+    coffee: "Bonjour ! Qu’est-ce que vous souhaitez commander ?",
+    airport: "Bonjour ! Puis-je voir votre passeport et votre réservation ?",
+    interview: "Bienvenue ! Pouvez-vous vous présenter brièvement ?",
+    restaurant: "Bonsoir ! Avez-vous une réservation ?",
+    free: "Bonjour ! De quoi souhaitez-vous parler aujourd’hui ?",
+    meeting: "Merci d’être là. Que pensez-vous de la proposition ?",
+  },
+  it: {
+    coffee: "Buon pomeriggio! Cosa desidera ordinare?",
+    airport: "Buongiorno! Posso vedere il passaporto e la prenotazione?",
+    interview: "Benvenuto! Può raccontarmi qualcosa di lei?",
+    restaurant: "Buonasera! Ha una prenotazione?",
+    free: "Ciao! Di cosa vorresti parlare oggi?",
+    meeting: "Grazie per essere qui. Cosa ne pensa della proposta?",
+  },
+};
+
+function Scenarios({
+  displayName,
+  preferences,
+  selectScenario,
+}: {
+  displayName: string;
+  preferences: LearnerPreferences | null;
+  selectScenario: (scenario: Scenario) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<"Todos" | Scenario["category"]>("Todos");
+  const visibleScenarios = scenarioData.filter((scenario) =>
+    (category === "Todos" || scenario.category === category)
+    && `${scenario.title} ${scenario.desc}`.toLocaleLowerCase("pt-BR").includes(query.trim().toLocaleLowerCase("pt-BR"))
+  );
   return (
     <div className="screen-content">
-      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida."/>
-      <div className="filter-row"><div className="search-box"><Search size={18}/><input placeholder="Buscar cenário..."/></div><div className="filter-pills"><button className="active">Todos</button><button>Cotidiano</button><button>Profissional</button><button>Viagem</button></div></div>
+      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida." displayName={displayName} preferences={preferences}/>
+      <div className="filter-row"><div className="search-box"><Search size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cenário..."/></div><div className="filter-pills">{(["Todos","Cotidiano","Profissional","Viagem"] as const).map((item) => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div></div>
       <div className="featured-scenario">
-        <div><span className="eyebrow light">RECOMENDADO PARA VOCÊ</span><h2>Desafio da semana</h2><p>Converse por cinco minutos sem recorrer ao português.</p><div><span><Clock3 size={16}/> 10 min</span><span><Target size={16}/> Fluência</span></div><Button onClick={() => go("conversation")} variant="secondary" icon={<ArrowRight size={17}/>}>Aceitar desafio</Button></div>
+        <div><span className="eyebrow light">RECOMENDADO PARA VOCÊ</span><h2>Desafio da semana</h2><p>Converse por cinco minutos sem recorrer ao português.</p><div><span><Clock3 size={16}/> 10 min</span><span><Target size={16}/> Fluência</span></div><Button onClick={() => selectScenario(scenarioData[0])} variant="secondary" icon={<ArrowRight size={17}/>}>Aceitar desafio</Button></div>
         <div className="challenge-art"><div className="speech-orb"><MessageCircle/></div><span>5:00</span></div>
       </div>
       <div className="scenario-grid">
-        {scenarioData.map(({ icon: Icon, title, desc, level, time, color }) => (
-          <button key={title} className="scenario-card" onClick={() => go("conversation")}>
+        {visibleScenarios.map((scenario) => {
+          const { icon: Icon, title, desc, level, time, color } = scenario;
+          return <button key={title} className="scenario-card" onClick={() => selectScenario(scenario)}>
             <span className={`scenario-art ${color}`}><Icon/></span>
             <div><span className="level-chip">{level}</span><h3>{title}</h3><p>{desc}</p><div className="scenario-meta"><span><Clock3 size={14}/>{time}</span><span>Começar <ArrowRight size={15}/></span></div></div>
-          </button>
-        ))}
+          </button>;
+        })}
       </div>
+      {visibleScenarios.length === 0 && <p className="form-message">Nenhum cenário encontrado.</p>}
     </div>
   );
 }
 
-function Conversation({ go }: { go: (id: ScreenId) => void }) {
+function Conversation({ go, scenario, preferences }: { go: (id: ScreenId) => void; scenario: Scenario; preferences: LearnerPreferences | null }) {
+  const ScenarioIcon = scenario.icon;
+  const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : scenario.level;
+  const targetLanguage = preferences?.targetLanguage || "en";
+  const opening = scenarioOpenings[targetLanguage][scenario.id];
   return (
     <div className="conversation-screen">
       <header className="conversation-header">
         <button onClick={() => go("scenarios")}><ArrowLeft/></button>
-        <div className="conversation-title"><span className="mini-avatar">Lu</span><div><strong>Na cafeteria</strong><small><i/> Lume · A2</small></div></div>
+        <div className="conversation-title"><span className="mini-avatar">Lu</span><div><strong>{scenario.title}</strong><small><i/> Lume · {level}</small></div></div>
         <div className="session-timer"><Clock3/> 06:42</div>
-        <Button variant="ghost" onClick={() => go("summary")}>Encerrar</Button>
+        <Button variant="ghost" disabled>Encerrar</Button>
       </header>
       <main className="conversation-body">
-        <div className="conversation-context"><Coffee/><div><span>SEU OBJETIVO</span><strong>Faça um pedido completo e pergunte o preço.</strong></div><button>Ver dicas</button></div>
+        <div className="conversation-context"><ScenarioIcon/><div><span>SEU OBJETIVO</span><strong>{scenario.objective}</strong></div><button disabled title="Dicas estarão disponíveis com a conversa por IA">Ver dicas</button></div>
         <div className="conversation-messages">
-          <div className="time-divider"><span>Hoje, 14:32</span></div>
-          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Good afternoon! Welcome to Sunrise Coffee. What can I get started for you?</span><button><Volume2 size={15}/> Ouvir novamente</button></div></div>
-          <div className="chat-message user-message"><div><span>Hi! I want a big cappuccino, please.</span><small>14:33</small></div></div>
-          <div className="inline-feedback compact-feedback">
-            <div className="feedback-title"><WandSparkles/><strong>Uma forma mais natural</strong><span>Vocabulário</span></div>
-            <div className="compare"><del>a big cappuccino</del><ArrowRight size={15}/><ins>a large cappuccino</ins></div>
-            <p>Para tamanhos de bebidas, usamos <strong>small, medium</strong> e <strong>large</strong>.</p>
-          </div>
-          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Of course! Would you like whole milk or oat milk?</span></div></div>
+          <div className="time-divider"><span>Início da prática</span></div>
+          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>{opening}</span><button disabled title="Síntese de voz ainda não disponível"><Volume2 size={15}/> Ouvir</button></div></div>
+          <div className="form-message"><strong>Cenário preparado.</strong> O envio de mensagens será ativado na próxima fase, junto com o gateway de IA.</div>
         </div>
         <div className="conversation-compose">
-          <div className="hint-row"><button><Sparkles size={15}/> Preciso de uma dica</button><button><Languages size={15}/> Traduzir pergunta</button></div>
-          <div className="compose-box"><button className="mic-button"><Mic2/></button><textarea aria-label="Responder" placeholder="Responda em inglês..."/><button className="send-button"><ArrowRight/></button></div>
+          <div className="hint-row"><button disabled title="Disponível com o tutor de IA"><Sparkles size={15}/> Preciso de uma dica</button><button disabled title="Disponível com o tutor de IA"><Languages size={15}/> Traduzir pergunta</button></div>
+          <div className="compose-box"><button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2/></button><textarea aria-label="Responder" disabled placeholder="A conversa será ativada com o gateway de IA"/><button className="send-button" disabled><ArrowRight/></button></div>
           <small>Pressione Enter para enviar · Shift + Enter para nova linha</small>
         </div>
       </main>
       <aside className="conversation-side">
         <div><span className="eyebrow">PROGRESSO DA SESSÃO</span><ProgressRing value={64} label="objetivo"/></div>
         <div className="session-goals"><h3>Nesta conversa</h3><p className="done"><CheckCircle2/> Cumprimentar</p><p className="done"><CheckCircle2/> Fazer o pedido</p><p><i/> Perguntar o preço</p></div>
-        <div className="live-words"><h3>Palavras desta conversa</h3><span>whole milk <button>+</button></span><span>oat milk <button>+</button></span><span>large <button>+</button></span></div>
+        <div className="live-words"><h3>Palavras desta conversa</h3><p>O vocabulário aparecerá conforme a conversa avançar.</p></div>
       </aside>
     </div>
   );
@@ -699,7 +864,7 @@ function Summary({ go }: { go: (id: ScreenId) => void }) {
             <article className="strength-card"><div className="card-title"><Star/><strong>Pontos fortes</strong></div><p><Check/> Usou frases completas</p><p><Check/> Respondeu no contexto</p><p><Check/> Manteve um tom educado</p></article>
             <article className="focus-card"><div className="card-title"><Target/><strong>Para melhorar</strong></div><p><span>1</span><div><strong>Tamanhos de bebidas</strong><small>Use “large” em vez de “big”.</small></div></p><p><span>2</span><div><strong>Pedidos mais naturais</strong><small>Prefira “I’d like...” a “I want...”.</small></div></p></article>
           </div>
-          <div className="saved-words"><div className="section-heading compact"><div><span className="eyebrow">VOCABULÁRIO</span><h2>Palavras da sessão</h2></div><button onClick={() => go("vocabulary")}>Ver todas</button></div><div>{["whole milk","oat milk","large","How much is it?"].map((word)=><span key={word}>{word}<button><Volume2 size={14}/></button></span>)}</div></div>
+          <div className="saved-words"><div className="section-heading compact"><div><span className="eyebrow">VOCABULÁRIO</span><h2>Palavras da sessão</h2></div><button onClick={() => go("vocabulary")}>Ver todas</button></div><div>{["whole milk","oat milk","large","How much is it?"].map((word)=><span key={word}>{word}<button disabled title="Síntese de voz ainda não disponível"><Volume2 size={14}/></button></span>)}</div></div>
         </main>
         <aside>
           <div className="next-card"><span className="eyebrow">PRÓXIMO PASSO</span><div className="next-icon"><BookOpen/></div><h3>Revise o que aprendeu</h3><p>Uma revisão rápida ajuda a fixar as quatro novas expressões.</p><Button full onClick={() => go("vocabulary")}>Revisar agora</Button><button onClick={() => go("dashboard")}>Voltar ao início</button></div>
@@ -709,22 +874,22 @@ function Summary({ go }: { go: (id: ScreenId) => void }) {
   );
 }
 
-function Vocabulary() {
+function Vocabulary({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
   const [flipped, setFlipped] = useState(false);
   return (
     <div className="screen-content">
-      <AppHeader title="Revisão inteligente" subtitle="12 palavras estão prontas para revisar hoje."/>
+      <AppHeader title="Revisão inteligente" subtitle="Seu vocabulário será organizado aqui." displayName={displayName} preferences={preferences}/>
       <div className="review-header">
         <div><span className="eyebrow">SESSÃO DE HOJE</span><h2>Fortaleça sua memória em 4 minutos</h2><div className="review-progress"><i/><span>1 de 12</span></div></div>
         <div className="memory-count"><Zap/><div><strong>87%</strong><span>retenção estimada</span></div></div>
       </div>
       <div className="flashcard-layout">
         <main>
-          <button className={`flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
+          <div className={`flashcard${flipped ? " flipped" : ""}`} role="button" tabIndex={0} onClick={() => setFlipped(!flipped)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setFlipped(!flipped); }}>
             <span className="card-tag">INGLÊS · CAFETERIA</span>
-            {!flipped ? <><small>Como você diria...</small><h2>“Eu gostaria de um café com leite.”</h2><span className="tap-hint"><RotateCcw size={16}/> Toque para revelar</span></> : <><small>Resposta</small><h2>I’d like a coffee with milk.</h2><button className="audio-word"><Volume2/> Ouvir pronúncia</button><p><strong>I’d like</strong> é uma forma educada e natural de fazer pedidos.</p></>}
-          </button>
-          <div className="review-actions"><span>Quão fácil foi lembrar?</span><div><button>Difícil<small>1 dia</small></button><button>Bom<small>3 dias</small></button><button>Fácil<small>7 dias</small></button></div></div>
+            {!flipped ? <><small>Como você diria...</small><h2>“Eu gostaria de um café com leite.”</h2><span className="tap-hint"><RotateCcw size={16}/> Toque para revelar</span></> : <><small>Resposta</small><h2>I’d like a coffee with milk.</h2><button className="audio-word" disabled onClick={(event) => event.stopPropagation()}><Volume2/> Áudio em breve</button><p><strong>I’d like</strong> é uma forma educada e natural de fazer pedidos.</p></>}
+          </div>
+          <div className="review-actions"><span>Quão fácil foi lembrar?</span><div><button disabled>Difícil<small>1 dia</small></button><button disabled>Bom<small>3 dias</small></button><button disabled>Fácil<small>7 dias</small></button></div></div>
         </main>
         <aside className="review-queue"><h3>Fila de hoje</h3><div className="queue-summary"><span><strong>12</strong>novas</span><span><strong>8</strong>revisões</span><span><strong>4 min</strong>estimativa</span></div><div className="queue-list">{["I’d like...","whole milk","large","How much..."].map((word, index)=><div key={word}><span>{index + 1}</span><p><strong>{word}</strong><small>{index === 0 ? "Agora" : `em ${index + 1} cartões`}</small></p></div>)}</div></aside>
       </div>
@@ -732,25 +897,25 @@ function Vocabulary() {
   );
 }
 
-function Assessment() {
+function Assessment({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
   return (
     <div className="screen-content assessment-screen">
-      <AppHeader title="Descubra seu nível" subtitle="Uma avaliação curta para personalizar seu plano."/>
+      <AppHeader title="Descubra seu nível" subtitle="Uma avaliação curta para personalizar seu plano." displayName={displayName} preferences={preferences}/>
       <div className="assessment-intro">
-        <div className="assessment-copy"><span className="eyebrow light">AVALIAÇÃO OPCIONAL</span><h2>Entenda onde você está — sem pressão.</h2><p>Vamos avaliar compreensão, vocabulário e escrita. O resultado é uma estimativa, não uma certificação.</p><div className="assessment-meta"><span><Clock3/> 8–10 minutos</span><span><Target/> 18 questões</span><span><ShieldCheck/> Resultado privado</span></div><Button variant="secondary">Começar avaliação <ArrowRight size={18}/></Button></div>
+        <div className="assessment-copy"><span className="eyebrow light">AVALIAÇÃO OPCIONAL</span><h2>Entenda onde você está — sem pressão.</h2><p>Vamos avaliar compreensão, vocabulário e escrita. O resultado é uma estimativa, não uma certificação.</p><div className="assessment-meta"><span><Clock3/> 8–10 minutos</span><span><Target/> 18 questões</span><span><ShieldCheck/> Resultado privado</span></div><Button variant="secondary" disabled>Avaliação em breve</Button></div>
         <div className="level-scale"><span>A1<small>Iniciante</small></span><span className="active">A2<small>Básico</small></span><span>B1<small>Intermediário</small></span><span>B2<small>Independente</small></span></div>
       </div>
       <section className="assessment-details"><h2>Como funciona</h2><div><article><span>01</span><BookOpen/><h3>Compreensão</h3><p>Leia situações curtas e escolha a interpretação mais adequada.</p></article><article><span>02</span><Languages/><h3>Uso do idioma</h3><p>Complete frases e mostre como usaria o inglês no cotidiano.</p></article><article><span>03</span><WandSparkles/><h3>Resultado explicado</h3><p>Veja evidências do seu nível e recomendações para avançar.</p></article></div></section>
-      <div className="sample-question"><div><span>EXEMPLO DE QUESTÃO</span><strong>Choose the best response:</strong><p>“Would you like anything else?”</p></div><div><button>A. Yes, I like.</button><button className="correct">B. No, that’s all. Thank you. <Check/></button><button>C. I don’t have.</button></div></div>
+      <div className="sample-question"><div><span>EXEMPLO DE QUESTÃO</span><strong>Choose the best response:</strong><p>“Would you like anything else?”</p></div><div><button disabled>A. Yes, I like.</button><button disabled className="correct">B. No, that’s all. Thank you. <Check/></button><button disabled>C. I don’t have.</button></div></div>
     </div>
   );
 }
 
-function Progress() {
+function Progress({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
   return (
     <div className="screen-content">
-      <AppHeader title="Seu progresso" subtitle="Evidências reais do que você vem construindo."/>
-      <div className="period-tabs"><button>7 dias</button><button className="active">30 dias</button><button>3 meses</button><button>Todo período</button></div>
+      <AppHeader title="Seu progresso" subtitle="Evidências reais do que você vem construindo." displayName={displayName} preferences={preferences}/>
+      <div className="period-tabs"><button disabled>7 dias</button><button className="active">30 dias</button><button disabled>3 meses</button><button disabled>Todo período</button></div>
       <div className="stats-grid">
         <Stat icon={<Clock3/>} value="8h 10min" label="tempo de estudo" tone="teal"/>
         <Stat icon={<MessageCircle/>} value="18" label="conversas concluídas" tone="coral"/>
@@ -772,18 +937,66 @@ function Progress() {
   );
 }
 
-function Profile({ go }: { go: (id: ScreenId) => void }) {
+function Profile({
+  go,
+  displayName,
+  email,
+  preferences,
+  saveSettings,
+}: {
+  go: (id: ScreenId) => void;
+  displayName: string;
+  email: string;
+  preferences: LearnerPreferences | null;
+  saveSettings: (name: string, preferences: LearnerPreferences) => Promise<AuthFeedback>;
+}) {
+  const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
+  const [name, setName] = useState(displayName);
+  const [draft, setDraft] = useState<LearnerPreferences>(preferences || {
+    targetLanguage: "en",
+    currentLevel: "unknown",
+    learningGoal: "conversation",
+    studyMinutesPerDay: 20,
+    studyDaysPerWeek: 5,
+  });
+  const [feedback, setFeedback] = useState<AuthFeedback>({});
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    setFeedback(await saveSettings(name, draft));
+    setSaving(false);
+  };
+
   return (
     <div className="screen-content">
-      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você."/>
+      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você." displayName={displayName} preferences={preferences}/>
       <div className="settings-layout">
-        <aside className="settings-nav"><button className="active"><CircleUserRound/> Perfil</button><button><Languages/> Idiomas</button><button><Target/> Plano e metas</button><button><Bell/> Notificações</button><button onClick={() => go("privacy")}><ShieldCheck/> Dados e privacidade</button></aside>
+        <aside className="settings-nav">
+          <button className={section === "profile" ? "active" : ""} onClick={() => setSection("profile")}><CircleUserRound/> Perfil</button>
+          <button className={section === "languages" ? "active" : ""} onClick={() => setSection("languages")}><Languages/> Idiomas</button>
+          <button className={section === "plan" ? "active" : ""} onClick={() => setSection("plan")}><Target/> Plano e metas</button>
+          <button className={section === "notifications" ? "active" : ""} onClick={() => setSection("notifications")}><Bell/> Notificações</button>
+          <button onClick={() => go("privacy")}><ShieldCheck/> Dados e privacidade</button>
+        </aside>
         <main className="settings-panel">
-          <section><div className="profile-heading"><div className="large-avatar">CA</div><div><h2>Carlos Almeida</h2><p>Aluno desde julho de 2026</p><button>Alterar foto</button></div></div></section>
-          <section><h3>Informações pessoais</h3><div className="form-grid"><label>Nome<input defaultValue="Carlos Almeida"/></label><label>Email<input defaultValue="carlos@email.com"/></label></div></section>
-          <section><h3>Idioma atual</h3><div className="current-language"><span>🇺🇸</span><div><strong>Inglês</strong><small>Nível A2 · Básico</small></div><button>Trocar idioma</button></div></section>
-          <section><h3>Preferências do tutor</h3><label className="setting-row"><div><strong>Correções imediatas</strong><small>Mostrar ajustes logo após cada mensagem.</small></div><input type="checkbox" defaultChecked/></label><label className="setting-row"><div><strong>Explicações progressivas</strong><small>Usar mais inglês conforme você evolui.</small></div><input type="checkbox" defaultChecked/></label></section>
-          <div className="save-row"><Button>Salvar alterações</Button></div>
+          {section === "profile" && <>
+            <section><div className="profile-heading"><div className="large-avatar">{name.slice(0, 2).toUpperCase()}</div><div><h2>{name || "Aluno"}</h2><p>Minha aprendizagem</p></div></div></section>
+            <section><h3>Informações pessoais</h3><div className="form-grid"><label>Nome<input maxLength={100} value={name} onChange={(event) => setName(event.target.value)}/></label><label>Email<input value={email} readOnly/></label></div></section>
+          </>}
+          {section === "languages" && <section><h3>Idioma e nível</h3><div className="form-grid">
+            <label>Idioma estudado<select value={draft.targetLanguage} onChange={(event) => setDraft({...draft, targetLanguage: event.target.value as OnboardingData["targetLanguage"]})}>{Object.entries(languageDetails).map(([value, item]) => <option key={value} value={value}>{item.flag} {item.name}</option>)}</select></label>
+            <label>Nível atual<select value={draft.currentLevel} onChange={(event) => setDraft({...draft, currentLevel: event.target.value as OnboardingData["currentLevel"]})}>{selectableLevels.map((value) => <option key={value} value={value}>{levelLabels[value]}</option>)}</select></label>
+          </div></section>}
+          {section === "plan" && <section><h3>Plano e metas</h3><div className="form-grid">
+            <label>Objetivo principal<select value={draft.learningGoal} onChange={(event) => setDraft({...draft, learningGoal: event.target.value as OnboardingData["learningGoal"]})}>{Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>Minutos por dia<select value={draft.studyMinutesPerDay} onChange={(event) => setDraft({...draft, studyMinutesPerDay: Number(event.target.value) as OnboardingData["studyMinutesPerDay"]})}>{[10,20,30,60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutos</option>)}</select></label>
+            <label>Dias por semana<select value={draft.studyDaysPerWeek} onChange={(event) => setDraft({...draft, studyDaysPerWeek: Number(event.target.value)})}>{[1,2,3,4,5,6,7].map((days) => <option key={days} value={days}>{days} {days === 1 ? "dia" : "dias"}</option>)}</select></label>
+          </div></section>}
+          {section === "notifications" && <section><h3>Notificações</h3><p>Os lembretes ainda não são enviados. Essa opção será ativada quando o serviço de notificações estiver disponível.</p></section>}
+          {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
+          {feedback.success && <div className="form-message form-success" role="status">{feedback.success}</div>}
+          {section !== "notifications" && <div className="save-row"><Button onClick={save} disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</Button></div>}
         </main>
       </div>
     </div>
@@ -797,11 +1010,11 @@ function Privacy() {
       <div className="privacy-layout">
         <main>
           <div className="privacy-principle"><ShieldCheck/><div><span className="eyebrow">NOSSO PRINCÍPIO</span><h2>Seus dados existem para ajudar você — e continuam sendo seus.</h2><p>Áudios são apagados após a transcrição. Você pode baixar ou excluir seus dados a qualquer momento.</p></div></div>
-          <section className="data-section"><h2>Seus dados</h2><article><span className="data-icon"><MessageCircle/></span><div><strong>Conversas e correções</strong><p>Usadas para manter seu histórico e personalizar atividades.</p><small>18 conversas salvas</small></div><button>Gerenciar</button></article><article><span className="data-icon"><WandSparkles/></span><div><strong>Memórias do tutor</strong><p>Objetivos, preferências e dificuldades que você autorizou.</p><small>8 memórias ativas</small></div><button>Visualizar</button></article><article><span className="data-icon"><Mic2/></span><div><strong>Gravações de voz</strong><p>Processadas para transcrição e excluídas automaticamente.</p><small className="safe"><CheckCircle2/> Nenhum áudio armazenado</small></div></article></section>
-          <section className="export-section"><div><Download/><div><h3>Baixe uma cópia dos seus dados</h3><p>Receba um arquivo JSON com perfil, progresso, conversas e vocabulário.</p></div><Button variant="secondary">Solicitar exportação</Button></div></section>
-          <section className="danger-zone"><h2>Excluir conta</h2><p>Esta ação remove permanentemente sua conta, progresso, conversas e arquivos associados.</p><Button variant="danger" icon={<Trash2 size={17}/>}>Excluir minha conta</Button></section>
+          <section className="data-section"><h2>Seus dados</h2><article><span className="data-icon"><MessageCircle/></span><div><strong>Conversas e correções</strong><p>Usadas para manter seu histórico e personalizar atividades.</p><small>Nenhuma conversa persistida ainda</small></div><button disabled>Gerenciar</button></article><article><span className="data-icon"><WandSparkles/></span><div><strong>Memórias do tutor</strong><p>Objetivos, preferências e dificuldades que você autorizou.</p><small>Memória ainda não ativada</small></div><button disabled>Visualizar</button></article><article><span className="data-icon"><Mic2/></span><div><strong>Gravações de voz</strong><p>Processadas para transcrição e excluídas automaticamente.</p><small className="safe"><CheckCircle2/> Nenhum áudio armazenado</small></div></article></section>
+          <section className="export-section"><div><Download/><div><h3>Baixe uma cópia dos seus dados</h3><p>A exportação será implementada junto ao backend.</p></div><Button variant="secondary" disabled>Exportação em breve</Button></div></section>
+          <section className="danger-zone"><h2>Excluir conta</h2><p>A exclusão segura será disponibilizada com o backend.</p><Button variant="danger" disabled icon={<Trash2 size={17}/>}>Exclusão em breve</Button></section>
         </main>
-        <aside><div className="privacy-summary"><h3>Resumo de privacidade</h3><p><Check/> Áudio apagado após transcrição</p><p><Check/> Dados protegidos por usuário</p><p><Check/> Sem venda de dados pessoais</p><p><Check/> Exportação disponível</p><button>Ver política completa <ArrowRight size={15}/></button></div><div className="session-card"><LockKeyhole/><h3>Sessões ativas</h3><p>Você está conectado neste dispositivo.</p><button>Encerrar outras sessões</button></div></aside>
+        <aside><div className="privacy-summary"><h3>Resumo de privacidade</h3><p><Check/> Áudio não armazenado</p><p><Check/> Dados protegidos por usuário</p><p><Check/> Sem venda de dados pessoais</p><button disabled>Política completa em preparação</button></div><div className="session-card"><LockKeyhole/><h3>Sessão atual</h3><p>Você está conectado neste dispositivo.</p><button disabled>Gerenciamento em breve</button></div></aside>
       </div>
     </div>
   );
@@ -828,11 +1041,15 @@ function AppNav({
   return (
     <>
       <aside className="app-sidebar">
-        <Brand/>
+        <Brand onClick={() => go("dashboard")}/>
         <nav>{navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label}</span>{id === "vocabulary" && <i>12</i>}</button>)}</nav>
         <div className="sidebar-bottom"><button onClick={() => go("profile")}><Settings/><span>Configurações</span></button><div className="mini-profile"><span>{displayName.slice(0, 2).toUpperCase()}</span><div><strong>{displayName}</strong><small>Minha aprendizagem</small></div><button className="signout-button" onClick={signOut} title="Sair"><LogIn/></button></div></div>
       </aside>
-      <nav className="mobile-nav">{navItems.slice(0,5).map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Meu plano" ? "Plano" : label}</span></button>)}</nav>
+      <nav className="mobile-nav">
+        {navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Meu plano" ? "Plano" : label}</span></button>)}
+        <button className={current === "profile" ? "active" : ""} onClick={() => go("profile")}><Settings/><span>Ajustes</span></button>
+        <button onClick={signOut} title="Sair"><LogIn/><span>Sair</span></button>
+      </nav>
     </>
   );
 }
@@ -867,6 +1084,9 @@ export default function ProductPrototype() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [displayName, setDisplayName] = useState("Aluno");
+  const [preferences, setPreferences] = useState<LearnerPreferences | null>(null);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
+  const [selectedScenario, setSelectedScenario] = useState<Scenario>(scenarioData[0]);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
 
@@ -887,9 +1107,31 @@ export default function ProductPrototype() {
       const storedPendingEmail = window.sessionStorage.getItem("lume:pending-email") || "";
       const isEmailConfirmation = window.location.hash.includes("type=signup") || window.location.search.includes("type=signup");
       const isPasswordReset = window.location.hash.includes("type=recovery") || window.location.search.includes("type=recovery");
+      let currentOnboardingCompleted = false;
+      const storedScenarioId = currentSession
+        ? window.sessionStorage.getItem(scenarioStorageKey(currentSession.user.id))
+        : null;
+      const storedScenario = scenarioData.find(({ id }) => id === storedScenarioId);
+      if (storedScenario) setSelectedScenario(storedScenario);
       setPendingEmail(storedPendingEmail);
       if (currentSession) {
         setDisplayName(currentSession.user.user_metadata.display_name || currentSession.user.email?.split("@")[0] || "Aluno");
+        const [{ data: profile }, { data: preferencesRow }] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("display_name,onboarding_completed")
+            .eq("id", currentSession.user.id)
+            .maybeSingle(),
+          supabase
+            .from("learner_preferences")
+            .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week")
+            .eq("user_id", currentSession.user.id)
+            .maybeSingle(),
+        ]);
+        if (profile?.display_name) setDisplayName(profile.display_name);
+        currentOnboardingCompleted = Boolean(profile?.onboarding_completed && preferencesRow);
+        setOnboardingCompleted(currentOnboardingCompleted);
+        setPreferences(preferencesRow ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow) : null);
       }
 
       const fromHash = window.location.hash.replace("#/", "") as ScreenId;
@@ -903,8 +1145,9 @@ export default function ProductPrototype() {
         setScreen("onboarding");
         window.history.replaceState(null, "", "#/onboarding");
       } else if (screens.some((item) => item.id === fromHash)) {
-        const protectedDestination = appScreens.has(fromHash) || fromHash === "onboarding";
-        setScreen(protectedDestination && !currentSession ? "login" : fromHash);
+        const destination = resolveDestination(fromHash, Boolean(currentSession), currentOnboardingCompleted) as ScreenId;
+        setScreen(destination);
+        if (destination !== fromHash) window.history.replaceState(null, "", `#/${destination}`);
       }
       setAuthLoading(false);
     };
@@ -912,6 +1155,14 @@ export default function ProductPrototype() {
     void initialize();
     const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
+      if (event === "SIGNED_OUT") {
+        setPreferences(null);
+        setOnboardingCompleted(false);
+        setDisplayName("Aluno");
+        setScreen("login");
+        window.history.replaceState(null, "", "#/login");
+        return;
+      }
       if (nextSession) {
         setDisplayName(nextSession.user.user_metadata.display_name || nextSession.user.email?.split("@")[0] || "Aluno");
       }
@@ -935,19 +1186,38 @@ export default function ProductPrototype() {
     };
   }, []);
 
-  const navigate = (id: ScreenId) => {
+  useEffect(() => {
+    if (authLoading) return;
+    const restoreNavigation = () => {
+      const requested = window.location.hash.replace("#/", "") as ScreenId;
+      if (!screens.some(({ id }) => id === requested)) return;
+      const destination = resolveDestination(requested, Boolean(session), onboardingCompleted) as ScreenId;
+      setScreen(destination);
+      if (destination !== requested) window.history.replaceState(null, "", `#/${destination}`);
+    };
+    window.addEventListener("popstate", restoreNavigation);
+    return () => window.removeEventListener("popstate", restoreNavigation);
+  }, [authLoading, onboardingCompleted, session]);
+
+  const navigate = (id: ScreenId, replace = false) => {
     setScreen(id);
-    window.history.replaceState(null, "", `#/${id}`);
+    window.history[replace ? "replaceState" : "pushState"](null, "", `#/${id}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const go = (id: ScreenId) => {
-    const destination = (appScreens.has(id) || id === "onboarding") && !session ? "login" : id;
+    const destination = resolveDestination(id, Boolean(session), onboardingCompleted) as ScreenId;
     if (screen === "confirm-email" && (destination === "login" || destination === "signup")) {
       window.sessionStorage.removeItem("lume:pending-email");
       setPendingEmail("");
     }
     navigate(destination);
+  };
+
+  const selectScenario = (scenario: Scenario) => {
+    setSelectedScenario(scenario);
+    if (session) window.sessionStorage.setItem(scenarioStorageKey(session.user.id), scenario.id);
+    navigate("conversation");
   };
 
   const submitAuth = async (mode: AuthMode, form: AuthFormData): Promise<AuthFeedback> => {
@@ -960,7 +1230,7 @@ export default function ProductPrototype() {
       const { error } = await supabase.auth.updateUser({ password: form.password });
       if (error) return { error: error.message };
       setPasswordRecovery(false);
-      navigate("dashboard");
+      navigate(onboardingCompleted ? "dashboard" : "onboarding");
       return {};
     }
 
@@ -978,7 +1248,11 @@ export default function ProductPrototype() {
         email: form.email,
         password: form.password,
         options: {
-          data: { display_name: form.name.trim() },
+          data: {
+            display_name: form.name.trim(),
+            terms_accepted: true,
+            privacy_policy_version: "2026-07-28",
+          },
           emailRedirectTo: window.location.origin,
         },
       });
@@ -1004,15 +1278,25 @@ export default function ProductPrototype() {
 
     setSession(data.session);
     setDisplayName(data.user.user_metadata.display_name || data.user.email?.split("@")[0] || "Aluno");
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("display_name,onboarding_completed")
-      .eq("id", data.user.id)
-      .maybeSingle();
+    const [{ data: profile, error: profileError }, { data: preferencesRow, error: preferencesError }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("display_name,onboarding_completed")
+        .eq("id", data.user.id)
+        .maybeSingle(),
+      supabase
+        .from("learner_preferences")
+        .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week")
+        .eq("user_id", data.user.id)
+        .maybeSingle(),
+    ]);
 
-    if (profileError) return { error: "Login realizado, mas não foi possível carregar seu perfil." };
+    if (profileError || preferencesError) return { error: "Login realizado, mas não foi possível carregar seu perfil." };
     if (profile?.display_name) setDisplayName(profile.display_name);
-    navigate(profile?.onboarding_completed ? "dashboard" : "onboarding");
+    const hasCompletedOnboarding = Boolean(profile?.onboarding_completed && preferencesRow);
+    setOnboardingCompleted(hasCompletedOnboarding);
+    setPreferences(preferencesRow ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow) : null);
+    navigate(hasCompletedOnboarding ? "dashboard" : "onboarding");
     return {};
   };
 
@@ -1054,35 +1338,53 @@ export default function ProductPrototype() {
       return { error: "Sua sessão expirou. Entre novamente para continuar." };
     }
 
-    const { error: preferencesError } = await supabase
-      .from("learner_preferences")
-      .upsert({
-        user_id: session.user.id,
-        target_language: data.targetLanguage,
-        current_level: data.currentLevel,
-        learning_goal: data.learningGoal,
-        study_minutes_per_day: data.studyMinutesPerDay,
-        study_days_per_week: 5,
-      });
-    if (preferencesError) return { error: "Não foi possível salvar suas preferências. Tente novamente." };
+    const { error } = await supabase.rpc("save_learner_settings", {
+      p_display_name: displayName,
+      p_target_language: data.targetLanguage,
+      p_current_level: data.currentLevel,
+      p_learning_goal: data.learningGoal,
+      p_study_minutes_per_day: data.studyMinutesPerDay,
+      p_study_days_per_week: 5,
+      p_complete_onboarding: true,
+    });
+    if (error) return { error: "Não foi possível concluir o onboarding. Tente novamente." };
 
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .upsert({
-        id: session.user.id,
-        display_name: displayName,
-        onboarding_completed: true,
-      });
-    if (profileError) return { error: "As preferências foram salvas, mas não foi possível concluir o perfil." };
-
-    go("dashboard");
+    setPreferences({ ...data, studyDaysPerWeek: 5 });
+    setOnboardingCompleted(true);
+    navigate("dashboard");
     return {};
+  };
+
+  const saveSettings = async (name: string, nextPreferences: LearnerPreferences): Promise<AuthFeedback> => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return { error: "Sua sessão expirou. Entre novamente." };
+    const normalizedName = name.trim();
+    if (!normalizedName) return { error: "Informe um nome para o perfil." };
+
+    const { error } = await supabase.rpc("save_learner_settings", {
+      p_display_name: normalizedName,
+      p_target_language: nextPreferences.targetLanguage,
+      p_current_level: nextPreferences.currentLevel,
+      p_learning_goal: nextPreferences.learningGoal,
+      p_study_minutes_per_day: nextPreferences.studyMinutesPerDay,
+      p_study_days_per_week: nextPreferences.studyDaysPerWeek,
+      p_complete_onboarding: false,
+    });
+    if (error) return { error: "Não foi possível salvar as alterações. Tente novamente." };
+
+    // Metadata is only a fallback display source. The transactional profile is authoritative.
+    await supabase.auth.updateUser({ data: { display_name: normalizedName } });
+    setDisplayName(normalizedName);
+    setPreferences(nextPreferences);
+    return { success: "Alterações salvas." };
   };
 
   const signOut = async () => {
     const supabase = getSupabaseBrowserClient();
     if (supabase) await supabase.auth.signOut();
     setSession(null);
+    setPreferences(null);
+    setOnboardingCompleted(false);
     go("landing");
   };
 
@@ -1097,16 +1399,16 @@ export default function ProductPrototype() {
       case "login": return <AuthScreen mode="login" go={go} submit={submitAuth}/>;
       case "recover": return <AuthScreen mode={passwordRecovery ? "update" : "recover"} go={go} submit={submitAuth}/>;
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
-      case "onboarding": return <Onboarding complete={completeOnboarding}/>;
-      case "dashboard": return <Dashboard go={go} displayName={displayName}/>;
-      case "plan": return <Plan go={go}/>;
-      case "scenarios": return <Scenarios go={go}/>;
-      case "conversation": return <Conversation go={go}/>;
+      case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
+      case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
+      case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
+      case "scenarios": return <Scenarios displayName={displayName} preferences={preferences} selectScenario={selectScenario}/>;
+      case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences}/>;
       case "summary": return <Summary go={go}/>;
-      case "vocabulary": return <Vocabulary/>;
-      case "assessment": return <Assessment/>;
-      case "progress": return <Progress/>;
-      case "profile": return <Profile go={go}/>;
+      case "vocabulary": return <Vocabulary displayName={displayName} preferences={preferences}/>;
+      case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
+      case "progress": return <Progress displayName={displayName} preferences={preferences}/>;
+      case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;
       case "privacy": return <Privacy/>;
     }
   })();
@@ -1115,7 +1417,7 @@ export default function ProductPrototype() {
     <div className={appScreens.has(screen) ? "app-shell" : "public-page"}>
       {appScreens.has(screen) && screen !== "conversation" && <AppNav current={screen} go={go} displayName={displayName} signOut={signOut}/>}
       <div className={appScreens.has(screen) && screen !== "conversation" ? "app-main" : "full-main"}>{content}</div>
-      <PrototypeNavigator current={screen} go={go}/>
+      {process.env.NODE_ENV === "development" && <PrototypeNavigator current={screen} go={go}/>}
     </div>
   );
 }

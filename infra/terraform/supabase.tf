@@ -7,7 +7,9 @@ resource "supabase_project" "backend" {
   region            = var.supabase_region
 
   lifecycle {
-    ignore_changes = [database_password]
+    # Supabase does not support moving an existing project to another region.
+    # Region changes require creating a new project and migrating the data.
+    ignore_changes = [database_password, region]
 
     precondition {
       condition     = var.supabase_organization_id != null && var.supabase_organization_id != ""

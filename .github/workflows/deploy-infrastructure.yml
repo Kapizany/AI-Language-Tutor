@@ -1,0 +1,116 @@
+name: Deploy infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/deploy-infrastructure.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: terraform-development
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    name: Plan and apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: development
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_environment: development
+      TF_VAR_google_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_google_region: ${{ vars.GCP_REGION }}
+      TF_VAR_enable_google_cloud: "true"
+      TF_VAR_enable_cloud_run_backend: ${{ vars.ENABLE_CLOUD_RUN_BACKEND || 'false' }}
+      TF_VAR_backend_supabase_url: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      TF_VAR_backend_allowed_origins: '["https://tutor.caps-labs.com"]'
+      TF_VAR_enable_google_billing_budget: ${{ vars.ENABLE_GCP_BILLING_BUDGET || 'false' }}
+      TF_VAR_google_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID }}
+      TF_VAR_google_monthly_budget_usd: "5"
+      TF_VAR_enable_cloudflare_pages: "true"
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_production_branch: main
+      TF_VAR_enable_supabase: "true"
+      TF_VAR_supabase_organization_id: ${{ vars.SUPABASE_ORGANIZATION_ID }}
+      TF_VAR_supabase_database_password: ${{ secrets.SUPABASE_DATABASE_PASSWORD }}
+      TF_VAR_supabase_region: ${{ vars.SUPABASE_REGION }}
+      TF_VAR_site_url: https://tutor.caps-labs.com
+      TF_VAR_additional_redirect_urls: '["http://localhost:3000/**","https://tutor.caps-labs.com/**"]'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate required configuration
+        run: |
+          test -n "$TF_VAR_google_project_id"
+          test -n "$TF_VAR_google_region"
+          test -n "$TF_VAR_backend_supabase_url"
+          test -n "${{ vars.GCP_TERRAFORM_STATE_BUCKET }}"
+          test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+          test -n "${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"
+          test -n "$TF_VAR_cloudflare_account_id"
+          test -n "$TF_VAR_supabase_organization_id"
+          test -n "$TF_VAR_supabase_database_password"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$SUPABASE_ACCESS_TOKEN"
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.TF_VAR_google_project_id }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Authenticate Docker to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.TF_VAR_google_region }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push initial backend image
+        env:
+          IMAGE_URI: ${{ env.TF_VAR_google_region }}-docker.pkg.dev/${{ env.TF_VAR_google_project_id }}/ai-language-tutor-development/lume-tutor-api:${{ github.sha }}
+        run: |
+          docker build --tag "$IMAGE_URI" backend
+          docker push "$IMAGE_URI"
+          echo "TF_VAR_backend_container_image=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+
+      - name: Initialize remote state
+        working-directory: infra/terraform
+        run: terraform init -backend-config="bucket=${{ vars.GCP_TERRAFORM_STATE_BUCKET }}"
+
+      - name: Check formatting
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Plan
+        working-directory: infra/terraform
+        run: terraform plan -out=ci.tfplan
+
+      - name: Apply reviewed plan
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve ci.tfplan

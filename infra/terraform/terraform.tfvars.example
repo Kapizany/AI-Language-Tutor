@@ -16,3 +16,21 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = [
   "http://localhost:3000/**",
 ]
+
+# Google Cloud backend. The project must already exist and have billing enabled.
+enable_google_cloud = false
+google_project_id   = "replace-with-google-project-id"
+google_region       = "us-east1"
+
+# Enable only after pushing the backend image and adding all secret versions.
+enable_cloud_run_backend = false
+backend_container_image  = null
+backend_supabase_url      = "https://replace-with-project-ref.supabase.co"
+backend_allowed_origins   = ["https://tutor.caps-labs.com"]
+cloud_run_min_instances   = 0
+cloud_run_max_instances   = 1
+
+# Optional billing alerts at 50%, 80%, and 100%. This is not a hard spending cap.
+enable_google_billing_budget = false
+google_billing_account_id    = "000000-000000-000000"
+google_monthly_budget_usd     = 5

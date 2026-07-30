@@ -4,7 +4,9 @@ This directory provisions the initial, free-tier-compatible infrastructure for
 AI Language Tutor:
 
 - a Cloudflare Pages project for the web application;
-- an optional Supabase project for PostgreSQL, authentication, and storage.
+- an optional Supabase project for PostgreSQL, authentication, and storage;
+- optional Google Cloud APIs, Artifact Registry, Secret Manager, IAM, billing
+  alerts, and a cost-constrained Cloud Run service for the FastAPI backend.
 
 It intentionally does not provision an LLM account. Model providers are selected
 at application runtime and their API keys must be stored as deployment secrets.
@@ -14,15 +16,22 @@ at application runtime and their API keys must be stored as deployment secrets.
 - Terraform 1.10 or newer;
 - a Cloudflare account and API token with Pages edit permission;
 - optionally, a Supabase organization and personal access token.
+- optionally, an existing Google Cloud project with billing enabled and
+  Application Default Credentials.
 
 Terraform reads provider credentials from environment variables:
 
 ```bash
 export CLOUDFLARE_API_TOKEN="..."
 export SUPABASE_ACCESS_TOKEN="..."
+gcloud auth application-default login
 ```
 
 Do not put either token in a `.tfvars` file.
+
+Terraform creates the Google Secret Manager resources but deliberately does not
+manage secret versions. Putting secret values in Terraform variables would
+persist them in state even when marked `sensitive`.
 
 ## Configure
 
@@ -73,3 +82,18 @@ platform settings. Application releases are intentionally handled separately:
 
 Do not add schema SQL directly to Terraform and do not run concurrent manual and
 automatic migration deployments.
+
+## Google Cloud backend bootstrap
+
+Google Cloud deployment uses two applies:
+
+1. Enable `enable_google_cloud` to create APIs, the runtime service account,
+   Artifact Registry, empty secrets, IAM, and optional billing alerts.
+2. Add secret versions and push a Docker image outside Terraform.
+3. Set `enable_cloud_run_backend = true` and provide the image URI to create
+   Cloud Run.
+
+The one-time bootstrap in `infra/bootstrap` creates the remote-state bucket,
+Artifact Registry, and GitHub OIDC identities. After that, GitHub Actions owns
+infrastructure applies and backend releases without static Google credentials.
+Detailed commands are in `.local/GOOGLE_CLOUD_TERRAFORM.md`.

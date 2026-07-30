@@ -77,3 +77,89 @@ variable "additional_redirect_urls" {
   type        = list(string)
   default     = ["http://localhost:3000/**"]
 }
+
+variable "enable_google_cloud" {
+  description = "Provision the Google Cloud APIs, service account, registry, and secret containers."
+  type        = bool
+  default     = false
+}
+
+variable "google_project_id" {
+  description = "Existing Google Cloud project ID. Required when Google Cloud is enabled."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "google_region" {
+  description = "Google Cloud region for Artifact Registry and Cloud Run."
+  type        = string
+  default     = "us-east1"
+}
+
+variable "enable_cloud_run_backend" {
+  description = "Create the Cloud Run backend after an application image and secret versions exist."
+  type        = bool
+  default     = false
+}
+
+variable "backend_container_image" {
+  description = "Immutable Artifact Registry image URI, preferably pinned by digest. Required when Cloud Run is enabled."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "backend_supabase_url" {
+  description = "Supabase project URL consumed by the backend."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "backend_allowed_origins" {
+  description = "Browser origins allowed to call the FastAPI backend."
+  type        = list(string)
+  default     = ["https://tutor.caps-labs.com"]
+}
+
+variable "cloud_run_min_instances" {
+  description = "Minimum Cloud Run instances. Zero preserves scale-to-zero."
+  type        = number
+  default     = 0
+}
+
+variable "cloud_run_max_instances" {
+  description = "Maximum Cloud Run instances used as an infrastructure cost guardrail."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.cloud_run_max_instances >= 1
+    error_message = "cloud_run_max_instances must be at least 1."
+  }
+}
+
+variable "enable_google_billing_budget" {
+  description = "Create Google Cloud billing alerts scoped to this project. A budget alerts but does not automatically stop resources."
+  type        = bool
+  default     = false
+}
+
+variable "google_billing_account_id" {
+  description = "Google Cloud billing account ID used for the optional project budget."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "google_monthly_budget_usd" {
+  description = "Monthly Google Cloud alert budget in USD."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.google_monthly_budget_usd > 0
+    error_message = "google_monthly_budget_usd must be greater than zero."
+  }
+}

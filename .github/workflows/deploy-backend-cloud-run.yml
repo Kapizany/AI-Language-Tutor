@@ -1,0 +1,125 @@
+name: Deploy backend to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend-cloud-run.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-run-backend-development
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Test, build, and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: development
+      url: ${{ steps.service.outputs.url }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPOSITORY: ai-language-tutor-development
+      IMAGE_NAME: lume-tutor-api
+      CLOUD_RUN_SERVICE: lume-tutor-api-development
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate required configuration
+        run: |
+          test -n "$GCP_PROJECT_ID"
+          test -n "$GCP_REGION"
+          test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+          test -n "${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev --python 3.12
+
+      - name: Validate backend
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy app
+          uv run pytest
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Authenticate Docker to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push immutable image
+        id: image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          docker build --tag "$IMAGE_URI" backend
+          docker push "$IMAGE_URI"
+          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy image to Cloud Run
+        id: deploy
+        run: |
+          if gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" >/dev/null 2>&1; then
+            gcloud run services update "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --image "${{ steps.image.outputs.uri }}" \
+              --quiet
+            echo "service_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Cloud Run is not created yet; the immutable image was published."
+            echo "The infrastructure workflow will create the first revision."
+            echo "service_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read service URL
+        id: service
+        if: steps.deploy.outputs.service_exists == 'true'
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          echo "url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify health
+        if: steps.deploy.outputs.service_exists == 'true'
+        run: curl --fail --retry 5 --retry-delay 5 "${{ steps.service.outputs.url }}/health"

@@ -1,0 +1,62 @@
+name: Validate backend
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/validate-backend.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/validate-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev --python 3.12
+
+      - name: Lint
+        working-directory: backend
+        run: uv run ruff check .
+
+      - name: Check formatting
+        working-directory: backend
+        run: uv run ruff format --check .
+
+      - name: Type-check
+        working-directory: backend
+        run: uv run mypy app
+
+      - name: Test
+        working-directory: backend
+        run: uv run pytest
+
+      - name: Build container
+        working-directory: backend
+        run: docker build --tag lume-tutor-api:${{ github.sha }} .

@@ -26,7 +26,10 @@ google_region       = "us-east1"
 enable_cloud_run_backend = false
 backend_container_image  = null
 backend_supabase_url      = "https://replace-with-project-ref.supabase.co"
-backend_allowed_origins   = ["https://tutor.caps-labs.com"]
+backend_allowed_origins = [
+  "https://tutor.caps-labs.com",
+  "https://ai-language-tutor-development.pages.dev",
+]
 cloud_run_min_instances   = 0
 cloud_run_max_instances   = 1
 

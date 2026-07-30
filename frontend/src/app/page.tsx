@@ -84,6 +84,20 @@ type AuthFeedback = {
   success?: string;
 };
 
+type TutorCorrection = {
+  original: string;
+  corrected: string;
+  explanation_pt_br: string;
+  severity: "minor" | "important" | "blocking";
+};
+
+type ConversationMessage = {
+  id: string;
+  role: "user" | "tutor";
+  text: string;
+  correction?: TutorCorrection | null;
+};
+
 type OnboardingData = {
   targetLanguage: "en" | "es" | "fr" | "it";
   currentLevel: "A1" | "A2" | "B1" | "B2" | "C1" | "unknown";
@@ -318,6 +332,25 @@ function Landing({ go }: { go: (id: ScreenId) => void }) {
 }
 
 function Demo({ go }: { go: (id: ScreenId) => void }) {
+  const [answer, setAnswer] = useState("");
+  const [interactions, setInteractions] = useState(1);
+  const [messages, setMessages] = useState<Array<{ role: "user" | "tutor"; text: string }>>([]);
+  const remaining = Math.max(0, 3 - interactions);
+  const send = () => {
+    const text = answer.trim();
+    if (!text || remaining === 0) return;
+    const tutorReplies = [
+      "Sounds good! What size would you like?",
+      "Perfect! Anything else for you today?",
+    ];
+    setMessages((current) => [
+      ...current,
+      { role: "user", text },
+      { role: "tutor", text: tutorReplies[Math.min(interactions - 1, tutorReplies.length - 1)] },
+    ]);
+    setAnswer("");
+    setInteractions((current) => current + 1);
+  };
   return (
     <div className="public-shell demo-shell">
       <header className="simple-header"><Brand onClick={() => go("landing")} /><span className="step-label">Demonstração · 2 de 3</span><button onClick={() => go("landing")}><X /></button></header>
@@ -337,13 +370,30 @@ function Demo({ go }: { go: (id: ScreenId) => void }) {
             <button disabled title="A demonstração interativa será conectada ao tutor de IA">Tentar novamente <RotateCcw size={14} /></button>
           </div>
           <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>Great choice! Would you like it hot or iced?</span></div></div>
+          {messages.map((message, index) => (
+            <div key={`${message.role}-${index}`} className={`chat-message ${message.role === "user" ? "user-message" : "tutor-message"}`}>
+              {message.role === "tutor" && <div className="mini-avatar">Lu</div>}
+              <div><span>{message.text}</span></div>
+            </div>
+          ))}
         </div>
         <div className="demo-composer">
           <button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2 /></button>
-          <input aria-label="Sua resposta" placeholder="Digite sua resposta em inglês..." />
-          <button className="send-button" disabled title="A demonstração interativa será conectada ao tutor de IA"><ArrowRight /></button>
+          <input
+            aria-label="Sua resposta"
+            value={answer}
+            disabled={remaining === 0}
+            onChange={(event) => setAnswer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") send();
+            }}
+            placeholder={remaining ? "Digite sua resposta em inglês..." : "Demonstração concluída"}
+          />
+          <button className="send-button" disabled={!answer.trim() || remaining === 0} onClick={send} aria-label="Enviar resposta"><ArrowRight /></button>
         </div>
-        <small className="demo-note">Você tem mais 1 interação grátis</small>
+        <small className="demo-note">
+          {remaining > 0 ? `Você tem mais ${remaining} ${remaining === 1 ? "interação grátis" : "interações grátis"}` : "Gostou? Crie sua conta para conversar com o tutor de IA."}
+        </small>
       </main>
     </div>
   );
@@ -815,11 +865,84 @@ function Scenarios({
   );
 }
 
-function Conversation({ go, scenario, preferences }: { go: (id: ScreenId) => void; scenario: Scenario; preferences: LearnerPreferences | null }) {
+function Conversation({
+  go,
+  scenario,
+  preferences,
+  session,
+}: {
+  go: (id: ScreenId) => void;
+  scenario: Scenario;
+  preferences: LearnerPreferences | null;
+  session: Session | null;
+}) {
   const ScenarioIcon = scenario.icon;
   const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : scenario.level;
   const targetLanguage = preferences?.targetLanguage || "en";
   const opening = scenarioOpenings[targetLanguage][scenario.id];
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [answer, setAnswer] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+
+  const send = async () => {
+    const text = answer.trim();
+    if (!text || sending) return;
+    if (!apiUrl) {
+      setError("A URL do backend ainda não foi configurada.");
+      return;
+    }
+    if (!session?.access_token) {
+      setError("Sua sessão expirou. Entre novamente para continuar.");
+      return;
+    }
+
+    const userMessage: ConversationMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      text,
+    };
+    setMessages((current) => [...current, userMessage]);
+    setAnswer("");
+    setError("");
+    setSending(true);
+
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/ai/tutor/reply`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: text,
+          target_language: targetLanguage,
+          learner_level: preferences?.currentLevel === "C1" ? "B2" : preferences?.currentLevel || "unknown",
+          scenario: scenario.id,
+          request_id: crypto.randomUUID(),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.detail || "Não foi possível obter a resposta do tutor.");
+      }
+      setMessages((current) => [
+        ...current,
+        {
+          id: payload.request_id,
+          role: "tutor",
+          text: payload.result.reply,
+          correction: payload.result.correction,
+        },
+      ]);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "O tutor está temporariamente indisponível.");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="conversation-screen">
       <header className="conversation-header">
@@ -833,11 +956,27 @@ function Conversation({ go, scenario, preferences }: { go: (id: ScreenId) => voi
         <div className="conversation-messages">
           <div className="time-divider"><span>Início da prática</span></div>
           <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>{opening}</span><button disabled title="Síntese de voz ainda não disponível"><Volume2 size={15}/> Ouvir</button></div></div>
-          <div className="form-message"><strong>Cenário preparado.</strong> O envio de mensagens será ativado na próxima fase, junto com o gateway de IA.</div>
+          {messages.map((message) => (
+            <div key={message.id}>
+              <div className={`chat-message ${message.role === "user" ? "user-message" : "tutor-message"}`}>
+                {message.role === "tutor" && <div className="mini-avatar">Lu</div>}
+                <div><span>{message.text}</span></div>
+              </div>
+              {message.correction && (
+                <div className="inline-feedback compact-feedback">
+                  <div className="feedback-title"><CheckCircle2/><strong>Uma correção para você</strong></div>
+                  <div className="compare"><del>{message.correction.original}</del><ArrowRight size={15}/><ins>{message.correction.corrected}</ins></div>
+                  <p>{message.correction.explanation_pt_br}</p>
+                </div>
+              )}
+            </div>
+          ))}
+          {sending && <div className="form-message">Lume está preparando uma resposta...</div>}
+          {error && <div className="form-message form-error" role="alert">{error}</div>}
         </div>
         <div className="conversation-compose">
           <div className="hint-row"><button disabled title="Disponível com o tutor de IA"><Sparkles size={15}/> Preciso de uma dica</button><button disabled title="Disponível com o tutor de IA"><Languages size={15}/> Traduzir pergunta</button></div>
-          <div className="compose-box"><button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2/></button><textarea aria-label="Responder" disabled placeholder="A conversa será ativada com o gateway de IA"/><button className="send-button" disabled><ArrowRight/></button></div>
+          <div className="compose-box"><button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2/></button><textarea aria-label="Responder" value={answer} disabled={sending} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Digite sua resposta no idioma estudado..."/><button className="send-button" disabled={!answer.trim() || sending} onClick={() => void send()} aria-label="Enviar mensagem"><ArrowRight/></button></div>
           <small>Pressione Enter para enviar · Shift + Enter para nova linha</small>
         </div>
       </main>
@@ -1403,7 +1542,7 @@ export default function ProductPrototype() {
       case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
       case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
       case "scenarios": return <Scenarios displayName={displayName} preferences={preferences} selectScenario={selectScenario}/>;
-      case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences}/>;
+      case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences} session={session}/>;
       case "summary": return <Summary go={go}/>;
       case "vocabulary": return <Vocabulary displayName={displayName} preferences={preferences}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;

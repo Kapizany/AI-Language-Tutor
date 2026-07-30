@@ -32,7 +32,7 @@ jobs:
       TF_VAR_enable_google_cloud: "true"
       TF_VAR_enable_cloud_run_backend: ${{ vars.ENABLE_CLOUD_RUN_BACKEND || 'false' }}
       TF_VAR_backend_supabase_url: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-      TF_VAR_backend_allowed_origins: '["https://tutor.caps-labs.com"]'
+      TF_VAR_backend_allowed_origins: '["https://tutor.caps-labs.com","https://ai-language-tutor-development.pages.dev"]'
       TF_VAR_enable_google_billing_budget: ${{ vars.ENABLE_GCP_BILLING_BUDGET || 'false' }}
       TF_VAR_google_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID }}
       TF_VAR_google_monthly_budget_usd: "5"

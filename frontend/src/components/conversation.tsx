@@ -120,17 +120,28 @@ export function Conversation({
 
   const acceptVoiceConsent = async () => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
+    if (!supabase || !session?.user.id) {
       setSpeechError("Não foi possível registrar sua autorização agora.");
       return;
     }
     setSavingVoiceConsent(true);
-    const { error } = await supabase.rpc("record_voice_processing_consent", {
-      p_policy_version: VOICE_POLICY_VERSION,
-    });
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({
+        voice_processing_consent_at: new Date().toISOString(),
+        voice_processing_policy_version: VOICE_POLICY_VERSION,
+      })
+      .eq("id", session.user.id)
+      .select("voice_processing_policy_version")
+      .maybeSingle();
     setSavingVoiceConsent(false);
-    if (error) {
-      setSpeechError("Não foi possível registrar sua autorização agora.");
+    if (error || data?.voice_processing_policy_version !== VOICE_POLICY_VERSION) {
+      const migrationMissing = error?.code === "PGRST204" || error?.code === "42703";
+      setSpeechError(
+        migrationMissing
+          ? "A atualização de voz ainda não foi aplicada ao banco de dados."
+          : "Não foi possível registrar sua autorização. Atualize a página e tente novamente.",
+      );
       return;
     }
     setVoiceConsent(true);

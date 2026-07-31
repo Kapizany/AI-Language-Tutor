@@ -10,6 +10,7 @@ import {
   passwordRecoveryRedirectUrl,
   resolveDestination,
   scenarioStorageKey,
+  validateNewPassword,
 } from "../src/lib/navigation.ts";
 
 test("visitante é enviado ao login ao abrir tela privada", () => {
@@ -66,6 +67,12 @@ test("callback de recuperação aceita marcador próprio e evento implícito do 
   assert.equal(isPasswordRecoveryCallback("", "?auth=recovery"), true);
   assert.equal(isPasswordRecoveryCallback("#access_token=token&type=recovery", ""), true);
   assert.equal(isPasswordRecoveryCallback("#/login", ""), false);
+});
+
+test("senha nova segue a política de segurança", () => {
+  assert.match(validateNewPassword("curta") || "", /12/);
+  assert.match(validateNewPassword("somenteletrasminusculas") || "", /maiúscula/);
+  assert.equal(validateNewPassword("Frase-Segura-2026!"), null);
 });
 
 test("migration contém o catálogo completo que será carregado do Supabase", () => {

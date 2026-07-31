@@ -78,9 +78,18 @@ begin
 end;
 $$;
 
-update public.learner_preferences
-set current_level = 'B2'
-where user_id = '10000000-0000-0000-0000-000000000002';
+do $$
+begin
+  begin
+    update public.learner_preferences
+    set current_level = 'B2'
+    where user_id = '10000000-0000-0000-0000-000000000002';
+    raise exception 'Authorization failure: direct preference update was allowed';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$$;
 
 select public.save_learner_settings(
   'Updated A',

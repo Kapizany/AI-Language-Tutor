@@ -62,6 +62,7 @@ import {
   passwordRecoveryRedirectUrl,
   resolveDestination,
   scenarioStorageKey,
+  validateNewPassword,
 } from "@/lib/navigation";
 
 type ScreenId =
@@ -468,7 +469,7 @@ function AuthScreen({
           <h1>{copy.title}</h1><p>{copy.subtitle}</p>
           {mode === "signup" && <label>Nome<input required maxLength={100} autoComplete="name" value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="Como podemos chamar você?" /></label>}
           {mode !== "update" && <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({...form, email: event.target.value})} placeholder="voce@email.com" /></label>}
-          {mode !== "recover" && <label>Senha<div className="password-wrap"><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder="Mínimo de 8 caracteres" /><LockKeyhole size={17}/></div></label>}
+          {mode !== "recover" && <label>Senha<div className="password-wrap"><input required minLength={mode === "login" ? 1 : 12} maxLength={128} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder={mode === "login" ? "Sua senha" : "12+ caracteres, maiúscula, número e símbolo"} /><LockKeyhole size={17}/></div></label>}
           {mode === "login" && <button type="button" className="forgot" onClick={() => go("recover")}>Esqueci minha senha</button>}
           {mode === "signup" && <label className="check-label"><input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/> <span>Li e aceito os Termos e a Política de Privacidade.</span></label>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
@@ -1500,20 +1501,11 @@ function LearningCenter({
     if (!session) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
-    const { data: previous } = await supabase
-      .from("learning_activity_progress")
-      .select("attempts")
-      .eq("user_id", session.user.id)
-      .eq("activity_id", activityId)
-      .maybeSingle();
-    const { error } = await supabase.from("learning_activity_progress").upsert({
-      user_id: session.user.id,
-      activity_id: activityId,
-      activity_type: activityType,
-      score,
-      attempts: (previous?.attempts || 0) + 1,
-      completed_at: new Date().toISOString(),
-    }, { onConflict: "user_id,activity_id" });
+    const { error } = await supabase.rpc("record_learning_activity_progress", {
+      p_activity_id: activityId,
+      p_activity_type: activityType,
+      p_score: score,
+    });
     if (!error) setSaved(true);
   };
 
@@ -2095,6 +2087,11 @@ export default function ProductPrototype() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
       return { error: "Configure NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para ativar a autenticação." };
+    }
+
+    if (mode === "update" || mode === "signup") {
+      const passwordError = validateNewPassword(form.password);
+      if (passwordError) return { error: passwordError };
     }
 
     if (mode === "update") {

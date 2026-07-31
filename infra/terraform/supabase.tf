@@ -29,7 +29,7 @@ resource "supabase_settings" "backend" {
   project_ref = supabase_project.backend[0].id
 
   api = jsonencode({
-    db_schema            = "public,storage,graphql_public"
+    db_schema            = "public,graphql_public"
     db_extra_search_path = "public,extensions"
     max_rows             = 1000
   })
@@ -40,9 +40,15 @@ resource "supabase_settings" "backend" {
       var.additional_redirect_urls,
       ["${trimsuffix(var.site_url, "/")}/?auth=recovery"]
     )))
-    disable_signup            = false
-    enable_email_signup       = true
-    enable_anonymous_sign_ins = false
-    mailer_autoconfirm        = false
+    disable_signup                                    = false
+    enable_email_signup                               = true
+    enable_anonymous_sign_ins                         = false
+    mailer_autoconfirm                                = false
+    mailer_otp_exp                                    = 900
+    password_min_length                               = 12
+    password_required_characters                      = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{}"
+    security_update_password_require_reauthentication = true
+    security_refresh_token_rotation_enabled           = true
+    security_refresh_token_reuse_interval             = 10
   })
 }

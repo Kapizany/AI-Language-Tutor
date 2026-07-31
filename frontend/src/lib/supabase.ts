@@ -20,6 +20,7 @@ export function getSupabaseBrowserClient() {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      flowType: "pkce",
     },
   });
 

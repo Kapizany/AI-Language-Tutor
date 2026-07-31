@@ -50,3 +50,13 @@ export function isPasswordRecoveryCallback(hash: string, search: string) {
   return hash.includes("type=recovery")
     || new URLSearchParams(search).get("auth") === "recovery";
 }
+
+export function validateNewPassword(password: string) {
+  if (password.length < 12) return "Use pelo menos 12 caracteres.";
+  if (password.length > 128) return "A senha deve ter no máximo 128 caracteres.";
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)
+    || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    return "Inclua letra maiúscula, minúscula, número e símbolo.";
+  }
+  return null;
+}

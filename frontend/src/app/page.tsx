@@ -49,7 +49,8 @@ import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
-  getLearningContent,
+  loadLearningContent,
+  type LearningContent,
   type LearningLevel,
 } from "@/lib/learning-content";
 import { calculateDashboardMetrics } from "@/lib/progress";
@@ -1236,17 +1237,43 @@ function LearningCenter({
   const preferredLevel = (["A1", "A2", "B1", "B2"].includes(preferences?.currentLevel || "")
     ? preferences?.currentLevel
     : "A1") as LearningLevel;
-  const learning = getLearningContent(language);
+  const catalogClient = getSupabaseBrowserClient();
+  const [learningContent, setLearningContent] = useState<LearningContent | null>(null);
+  const [contentError, setContentError] = useState(
+    catalogClient ? "" : "A conexão com o catálogo ainda não está configurada.",
+  );
+  const [contentVersion, setContentVersion] = useState(0);
+  const learning = learningContent || { readings: [], grammar: [], flashcards: [] };
   const [mode, setMode] = useState<LearningMode>("reading");
   const [level, setLevel] = useState<LearningLevel>(preferredLevel);
+  const [activityIndex, setActivityIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
 
-  const readingActivity = learning.readings.find((item) => item.level === level)!;
-  const grammarActivity = learning.grammar.find((item) => item.level === level)!;
-  const activity = mode === "reading" ? readingActivity : grammarActivity;
+  useEffect(() => {
+    if (!catalogClient) return;
+    let active = true;
+    const load = async () => {
+      setContentError("");
+      try {
+        const content = await loadLearningContent(catalogClient, language);
+        if (active) setLearningContent(content);
+      } catch {
+        if (active) setContentError("Não foi possível carregar as lições. Tente novamente.");
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [catalogClient, contentVersion, language]);
+
+  const readingActivities = learning.readings.filter((item) => item.level === level);
+  const grammarActivities = learning.grammar.filter((item) => item.level === level);
+  const activityList = mode === "reading" ? readingActivities : grammarActivities;
+  const activity = activityList[activityIndex];
+  const readingActivity = mode === "reading" ? readingActivities[activityIndex] : null;
+  const grammarActivity = mode === "grammar" ? grammarActivities[activityIndex] : null;
 
   const recordProgress = async (activityId: string, activityType: LearningMode, score: number) => {
     if (!session) return;
@@ -1273,12 +1300,23 @@ function LearningCenter({
     setMode(nextMode);
     setSelectedAnswer(null);
     setSaved(false);
+    setActivityIndex(0);
     setCardIndex(0);
     setFlipped(false);
   };
 
   const chooseLevel = (nextLevel: LearningLevel) => {
     setLevel(nextLevel);
+    setActivityIndex(0);
+    setSelectedAnswer(null);
+    setSaved(false);
+  };
+
+  const moveActivity = (direction: -1 | 1) => {
+    setActivityIndex((current) => {
+      const next = current + direction;
+      return Math.max(0, Math.min(activityList.length - 1, next));
+    });
     setSelectedAnswer(null);
     setSaved(false);
   };
@@ -1300,6 +1338,17 @@ function LearningCenter({
     setFlipped(false);
   };
 
+  if (!learningContent) {
+    return (
+      <div className="screen-content">
+        <AppHeader title="Aprender" subtitle="Leitura, gramática e lições rápidas no seu ritmo." displayName={displayName} preferences={preferences}/>
+        <div className="learning-loading">
+          {contentError ? <><BookOpen/><p>{contentError}</p><Button onClick={() => setContentVersion((value) => value + 1)}>Tentar novamente</Button></> : <><Sparkles/><p>Carregando seu catálogo...</p></>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen-content">
       <AppHeader title="Aprender" subtitle="Leitura, gramática e lições rápidas no seu ritmo." displayName={displayName} preferences={preferences}/>
@@ -1317,10 +1366,10 @@ function LearningCenter({
             ))}
           </div>
           <article className="learning-activity">
-            <span className="level-chip">{level} · {languageDetails[language].name}</span>
+            <div className="learning-activity-heading"><span className="level-chip">{level} · {languageDetails[language].name}</span><strong>{activityIndex + 1} de {activityList.length}</strong></div>
             <h2>{activity.title}</h2>
-            {mode === "grammar" && <div className="grammar-note"><strong>Como funciona</strong><p>{grammarActivity.explanation}</p><span>{grammarActivity.example}</span></div>}
-            {mode === "reading" && <p className="reading-text">{readingActivity.text}</p>}
+            {grammarActivity && <div className="grammar-note"><strong>Como funciona</strong><p>{grammarActivity.explanation}</p><span>{grammarActivity.example}</span></div>}
+            {readingActivity && <p className="reading-text">{readingActivity.text}</p>}
             <section className="learning-question">
               <strong>{activity.question}</strong>
               <div>
@@ -1339,13 +1388,17 @@ function LearningCenter({
                 </p>
               )}
             </section>
+            <div className="learning-navigation">
+              <Button variant="secondary" disabled={activityIndex === 0} onClick={() => moveActivity(-1)} icon={<ArrowLeft/>}>Anterior</Button>
+              <Button disabled={activityIndex === activityList.length - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próxima</Button>
+            </div>
           </article>
         </>
       )}
 
       {mode === "flashcard" && (
         <div className="quick-lesson">
-          <div className="quick-lesson-progress"><span>Lição de 3 minutos</span><strong>{cardIndex + 1}/{learning.flashcards.length}</strong></div>
+          <div className="quick-lesson-progress"><span>50 cartões · dificuldade progressiva</span><strong>{cardIndex + 1}/{learning.flashcards.length}</strong></div>
           <button className={`learning-flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
             <small>{flipped ? "SIGNIFICADO" : languageDetails[language].name.toUpperCase()}</small>
             <strong>{flipped ? learning.flashcards[cardIndex].back : learning.flashcards[cardIndex].front}</strong>

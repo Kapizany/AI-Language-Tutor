@@ -18,12 +18,12 @@ def test_recommended_provider_and_prices_are_safe_defaults() -> None:
 def test_csv_settings_are_parsed() -> None:
     settings = Settings(
         _env_file=None,
-        app_allowed_origins="http://localhost:3000,https://tutor.caps-labs.com",
+        app_allowed_origins="http://localhost:3000,https://ai-language-tutor.caps-labs.com",
         llm_fallback_providers="gemini,deepseek",
     )
 
     assert settings.app_allowed_origins == [
         "http://localhost:3000",
-        "https://tutor.caps-labs.com",
+        "https://ai-language-tutor.caps-labs.com",
     ]
     assert settings.llm_fallback_providers == ["gemini", "deepseek"]

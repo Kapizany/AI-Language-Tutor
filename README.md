@@ -119,10 +119,22 @@ processing the same commit.
 The initial migration creates user profiles, persistent onboarding preferences,
 automatic profile creation after signup, and per-user RLS policies.
 
+Learning content is stored in the Supabase tables `learning_readings`,
+`grammar_lessons`, and `quick_lesson_flashcards`. Published rows are readable by
+the application, while changes require trusted database access. Content editors
+can use Supabase Table Editor to add, reorder, unpublish, or remove lessons
+without rebuilding the frontend. Prefer setting `is_published = false` when a
+lesson already has learner history.
+
 ## Deployment
 
 The frontend is deployed to the existing Direct Upload Cloudflare Pages project
 by `.github/workflows/deploy-cloudflare-pages.yml`.
+
+The canonical application URL is
+`https://ai-language-tutor.caps-labs.com`. Terraform attaches this hostname to
+the Pages project and configures it as the Supabase Auth Site URL. The default
+`pages.dev` hostname remains an allowed callback for deployment diagnostics.
 
 The workflow runs on frontend changes pushed to `main` and can also be started
 manually. It audits production dependencies, runs lint and type-checking, builds

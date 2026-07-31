@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { getLearningContent } from "../src/lib/learning-content.ts";
 import { calculateDashboardMetrics } from "../src/lib/progress.ts";
 import {
   isEmailConfirmed,
@@ -57,8 +57,8 @@ test("email confirmado é identificado pelo timestamp do Supabase", () => {
 
 test("redirect de recuperação usa query string sem competir com tokens no hash", () => {
   assert.equal(
-    passwordRecoveryRedirectUrl("https://tutor.caps-labs.com/"),
-    "https://tutor.caps-labs.com/?auth=recovery",
+    passwordRecoveryRedirectUrl("https://ai-language-tutor.caps-labs.com/"),
+    "https://ai-language-tutor.caps-labs.com/?auth=recovery",
   );
 });
 
@@ -68,13 +68,14 @@ test("callback de recuperação aceita marcador próprio e evento implícito do 
   assert.equal(isPasswordRecoveryCallback("#/login", ""), false);
 });
 
-test("catálogo oferece leitura e gramática nos quatro níveis para todos os idiomas", () => {
-  for (const language of ["en", "es", "fr", "it"] as const) {
-    const content = getLearningContent(language);
-    assert.deepEqual(content.readings.map(({ level }) => level), ["A1", "A2", "B1", "B2"]);
-    assert.deepEqual(content.grammar.map(({ level }) => level), ["A1", "A2", "B1", "B2"]);
-    assert.ok(content.flashcards.length >= 5);
-  }
+test("migration contém o catálogo completo que será carregado do Supabase", () => {
+  const migration = readFileSync(
+    new URL("../../supabase/migrations/20260731121000_seed_learning_content.sql", import.meta.url),
+    "utf8",
+  );
+  assert.equal(migration.match(/'(?:en|es|fr|it)-reading-/g)?.length, 160);
+  assert.equal(migration.match(/'(?:en|es|fr|it)-grammar-/g)?.length, 200);
+  assert.equal(migration.match(/'(?:en|es|fr|it)-flashcard-/g)?.length, 200);
 });
 
 test("dashboard calcula sequência, semana e progresso diário com atividades reais", () => {

@@ -62,6 +62,15 @@ export function AppHeader({
     onNavigate?.(screen);
   };
 
+  const openProfile = () => {
+    if (onNavigate) {
+      onNavigate("profile");
+      return;
+    }
+    window.history.pushState(null, "", "#/profile");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   return (
     <header className="app-header">
       <div>
@@ -114,7 +123,15 @@ export function AppHeader({
             </div>
           )}
         </div>
-        <div className="user-avatar">{(displayName || "Aluno").slice(0, 2).toUpperCase()}</div>
+        <button
+          className="user-avatar"
+          type="button"
+          title="Meu perfil"
+          aria-label="Abrir meu perfil"
+          onClick={openProfile}
+        >
+          {(displayName || "Aluno").slice(0, 2).toUpperCase()}
+        </button>
       </div>
     </header>
   );

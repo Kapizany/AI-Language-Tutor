@@ -617,8 +617,12 @@ export function ConversationSummary({
             <Button full onClick={goToScenarios}>
               Escolher cenário
             </Button>
-            <button onClick={goToSessions}>Ver histórico de conversas</button>
-            <button onClick={goToDashboard}>Voltar ao início</button>
+            <div className="next-card-actions">
+              <Button full variant="secondary" onClick={goToSessions}>
+                Ver histórico de conversas
+              </Button>
+              <button onClick={goToDashboard}>Voltar ao início</button>
+            </div>
           </div>
         </aside>
       </div>

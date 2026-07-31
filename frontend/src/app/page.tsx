@@ -13,6 +13,8 @@ import {
   Clock3,
   Coffee,
   Download,
+  Eye,
+  EyeOff,
   Flame,
   Globe2,
   GraduationCap,
@@ -289,6 +291,7 @@ function AuthScreen({
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const copy = {
     signup: { title: "Crie seu espaço de aprendizagem", subtitle: "Salve seu progresso e receba um plano feito para você.", action: "Criar conta" },
     login: { title: "Que bom ter você de volta", subtitle: "Continue exatamente de onde parou.", action: "Entrar" },
@@ -328,7 +331,7 @@ function AuthScreen({
           <h1>{copy.title}</h1><p>{copy.subtitle}</p>
           {mode === "signup" && <label>Nome<input required maxLength={100} autoComplete="name" value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="Como podemos chamar você?" /></label>}
           {mode !== "update" && <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({...form, email: event.target.value})} placeholder="voce@email.com" /></label>}
-          {mode !== "recover" && <label>Senha<div className="password-wrap"><input required minLength={mode === "login" ? 1 : 12} maxLength={128} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder={mode === "login" ? "Sua senha" : "12+ caracteres, maiúscula, número e símbolo"} /><LockKeyhole size={17}/></div></label>}
+          {mode !== "recover" && <label>Senha<div className="password-wrap"><LockKeyhole className="password-lock" size={17}/><input required minLength={mode === "login" ? 1 : 12} maxLength={128} type={showPassword ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} placeholder={mode === "login" ? "Sua senha" : "12+ caracteres, maiúscula, número e símbolo"} /><button className="password-toggle" type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"} aria-pressed={showPassword}>{showPassword ? <EyeOff size={19}/> : <Eye size={19}/>}</button></div></label>}
           {mode === "login" && <button type="button" className="forgot" onClick={() => go("recover")}>Esqueci minha senha</button>}
           {mode === "signup" && <label className="check-label"><input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/> <span>Li e aceito os Termos e a Política de Privacidade.</span></label>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
@@ -605,7 +608,7 @@ function Dashboard({ go, displayName, preferences, session, scenarios, startScen
   const monthlyPercent = Math.min(100, Math.round((metrics.activitiesThisMonth / monthlyTarget) * 100));
   const monthName = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date());
   return (
-    <div className="screen-content">
+    <div className="screen-content dashboard-screen">
       <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences} onNavigate={go}/>
       <div className="streak-banner">
         <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>{metricsLoading ? "…" : `${metrics.streak} ${metrics.streak === 1 ? "dia" : "dias"}`}</strong></div></div>
@@ -1558,6 +1561,7 @@ function AppNav({
   displayName: string;
   signOut: () => Promise<void>;
 }) {
+  const firstName = displayName.trim().split(/\s+/)[0] || "Aluno";
   const navItems: Array<[ScreenId, string, IconType]> = [
     ["dashboard", "Início", Home],
     ["learn", "Aprender", GraduationCap],
@@ -1572,7 +1576,7 @@ function AppNav({
       <aside className="app-sidebar">
         <Brand onClick={() => go("dashboard")}/>
         <nav>{navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label}</span></button>)}</nav>
-        <div className="sidebar-bottom"><button onClick={() => go("profile")}><Settings/><span>Configurações</span></button><div className="mini-profile"><span>{displayName.slice(0, 2).toUpperCase()}</span><div><strong>{displayName}</strong><small>Minha aprendizagem</small></div><button className="signout-button" onClick={signOut} title="Sair"><LogIn/></button></div></div>
+        <div className="sidebar-bottom"><button onClick={() => go("profile")}><Settings/><span>Configurações</span></button><div className="mini-profile"><button className="mini-profile-link" onClick={() => go("profile")} title="Meu perfil"><span>{firstName.slice(0, 2).toUpperCase()}</span><div><strong>{firstName}</strong><small>Meu perfil</small></div></button><button className="signout-button" onClick={signOut} title="Sair" aria-label="Sair"><LogIn/></button></div></div>
       </aside>
       <nav className="mobile-nav">
         {navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Minha rotina" ? "Rotina" : label}</span></button>)}

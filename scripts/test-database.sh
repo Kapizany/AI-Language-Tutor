@@ -23,13 +23,22 @@ docker run \
   "$image" >/dev/null
 
 for _ in $(seq 1 60); do
-  if docker exec "$container" pg_isready --username postgres --dbname postgres >/dev/null 2>&1; then
+  # Durante o initdb, a imagem oficial inicia um servidor temporário acessível
+  # apenas pelo socket Unix e o encerra antes de subir o servidor definitivo.
+  # Testar por TCP evita considerar esse servidor transitório como pronto.
+  if docker exec "$container" pg_isready \
+    --host 127.0.0.1 \
+    --username postgres \
+    --dbname postgres >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-if ! docker exec "$container" pg_isready --username postgres --dbname postgres >/dev/null 2>&1; then
+if ! docker exec "$container" pg_isready \
+  --host 127.0.0.1 \
+  --username postgres \
+  --dbname postgres >/dev/null 2>&1; then
   echo "PostgreSQL não ficou pronto em tempo." >&2
   docker logs "$container" >&2
   exit 1

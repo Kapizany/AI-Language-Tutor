@@ -3,9 +3,16 @@ import {
   Coffee,
   Globe2,
   Headphones,
+  HeartPulse,
+  Handshake,
+  Hotel,
+  House,
   MessageCircle,
   Plane,
+  Scale,
+  ShoppingBasket,
   Utensils,
+  Users,
 } from "lucide-react";
 import { createElement } from "react";
 import type { IconType } from "@/lib/learner";
@@ -22,6 +29,14 @@ const icons: Record<string, IconType> = {
   utensils: Utensils,
   globe: Globe2,
   headphones: Headphones,
+  users: Users,
+  shopping: ShoppingBasket,
+  hotel: Hotel,
+  health: HeartPulse,
+  home: House,
+  support: Headphones,
+  handshake: Handshake,
+  debate: Scale,
 };
 
 export function scenarioIcon(key: string): IconType {

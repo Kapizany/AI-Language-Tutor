@@ -356,7 +356,7 @@ begin
   if (select count(*) from public.conversation_messages) < 3 then
     raise exception 'RLS failure: owner cannot read their own messages';
   end if;
-  if (select count(*) from public.conversation_scenarios) <> 6 then
+  if (select count(*) from public.conversation_scenarios) <> 14 then
     raise exception 'RLS failure: published scenarios are not readable';
   end if;
 end;

@@ -51,6 +51,12 @@ const severityLabels: Record<string, string> = {
   blocking: "Precisa reformular",
 };
 const VOICE_POLICY_VERSION = "2026-07-31-voice-v1";
+const conversationStarters: Record<string, string[]> = {
+  en: ["I would like...", "In my experience...", "Could you tell me more about...?"],
+  es: ["Me gustaría...", "En mi experiencia...", "¿Podría contarme más sobre...?"],
+  fr: ["Je voudrais...", "D'après mon expérience...", "Pourriez-vous m'en dire plus sur... ?"],
+  it: ["Vorrei...", "Nella mia esperienza...", "Potrebbe dirmi di più su...?"],
+};
 
 export function Conversation({
   scenario,
@@ -86,6 +92,8 @@ export function Conversation({
   const [voiceConsent, setVoiceConsent] = useState(false);
   const [showVoiceConsent, setShowVoiceConsent] = useState(false);
   const [savingVoiceConsent, setSavingVoiceConsent] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const [hintIndex, setHintIndex] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -228,6 +236,7 @@ export function Conversation({
     };
     setMessages((current) => [...current, optimistic]);
     setAnswer("");
+    setShowHint(false);
     setSendError("");
     setRetryText("");
     setSending(true);
@@ -568,7 +577,14 @@ export function Conversation({
           ) : (
             <>
               <div className="hint-row">
-                <button disabled title="Disponível em uma etapa futura">
+                <button
+                  type="button"
+                  aria-expanded={showHint}
+                  onClick={() => {
+                    if (showHint) setHintIndex((current) => current + 1);
+                    setShowHint(true);
+                  }}
+                >
                   <Sparkles size={15} /> Preciso de uma dica
                 </button>
                 <button disabled title="Disponível em uma etapa futura">
@@ -580,6 +596,38 @@ export function Conversation({
                   </button>
                 )}
               </div>
+              {showHint && (
+                <div className="conversation-hint" role="status">
+                  <div>
+                    <Sparkles/>
+                    <div>
+                      <strong>Uma ideia para continuar</strong>
+                      <p>
+                        {scenario.goals[
+                          (conversation.learner_message_count + hintIndex) % scenario.goals.length
+                        ]}
+                      </p>
+                    </div>
+                    <button onClick={() => setShowHint(false)} aria-label="Fechar dica"><X/></button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const starters = conversationStarters[targetLanguage] || conversationStarters.en;
+                      const starter = starters[hintIndex % starters.length];
+                      setAnswer((current) => current.trim() ? `${current} ${starter}` : starter);
+                      setShowHint(false);
+                    }}
+                  >
+                    Comece com: <strong>
+                      {(conversationStarters[targetLanguage] || conversationStarters.en)[
+                        hintIndex % conversationStarters.en.length
+                      ]}
+                    </strong>
+                  </button>
+                  <small>A dica orienta a ideia, mas você constrói a resposta.</small>
+                </div>
+              )}
               <div className="compose-box">
                 <button
                   className={`mic-button${listening ? " listening" : ""}`}

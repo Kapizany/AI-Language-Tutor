@@ -49,9 +49,7 @@ def create_app() -> FastAPI:
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Cache-Control"] = "no-store"
         if settings.app_env == "production":
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=31536000; includeSubDomains"
-            )
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; frame-ancestors 'none'"
             )

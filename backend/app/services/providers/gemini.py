@@ -2,14 +2,8 @@ from typing import Any
 
 import httpx
 
-from app.schemas.llm import TutorReplyRequest
-from app.services.providers.base import LLMProvider, ProviderResult
-from app.services.providers.common import (
-    SYSTEM_PROMPT,
-    build_user_prompt,
-    calculate_cost,
-    parse_tutor_reply,
-)
+from app.services.providers.base import CompletionRequest, CompletionResult, LLMProvider
+from app.services.providers.common import calculate_cost
 
 
 class GeminiProvider(LLMProvider):
@@ -21,7 +15,6 @@ class GeminiProvider(LLMProvider):
         model: str,
         api_key: str,
         timeout_seconds: float,
-        max_output_tokens: int,
         input_usd_per_million: float,
         output_usd_per_million: float,
     ) -> None:
@@ -29,24 +22,23 @@ class GeminiProvider(LLMProvider):
         self.api_key = api_key
         self.input_usd_per_million = input_usd_per_million
         self.output_usd_per_million = output_usd_per_million
-        self.max_output_tokens = max_output_tokens
         self.client = httpx.AsyncClient(
             base_url="https://generativelanguage.googleapis.com",
             timeout=timeout_seconds,
         )
 
-    async def generate_tutor_reply(self, request: TutorReplyRequest) -> ProviderResult:
+    async def complete(self, request: CompletionRequest) -> CompletionResult:
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured")
         response = await self.client.post(
             f"/v1beta/models/{self.model}:generateContent",
             params={"key": self.api_key},
             json={
-                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                "contents": [{"role": "user", "parts": [{"text": build_user_prompt(request)}]}],
+                "system_instruction": {"parts": [{"text": request.system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": request.user_prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.3,
-                    "maxOutputTokens": self.max_output_tokens,
+                    "temperature": request.temperature,
+                    "maxOutputTokens": request.max_output_tokens,
                     "responseMimeType": "application/json",
                 },
             },
@@ -59,12 +51,8 @@ class GeminiProvider(LLMProvider):
         output_tokens = int(usage.get("candidatesTokenCount", 0)) + int(
             usage.get("thoughtsTokenCount", 0)
         )
-        raw_content = payload["candidates"][0]["content"]["parts"][0]["text"]
-        result = parse_tutor_reply(raw_content)
-        return ProviderResult(
-            result=result,
-            provider=self.name,
-            model=self.model,
+        return CompletionResult(
+            content=payload["candidates"][0]["content"]["parts"][0]["text"],
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             estimated_cost_usd=calculate_cost(

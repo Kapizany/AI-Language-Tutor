@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     llm_circuit_recovery_seconds: int = 30
     llm_max_cost_per_request_usd: float = 0.02
 
+    # Configuração por tarefa. Uma lista vazia herda `llm_primary_provider` mais
+    # `llm_fallback_providers`, então trocar o provedor global continua valendo
+    # para todas as tarefas que não foram sobrescritas.
+    llm_tutor_reply_providers: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    llm_tutor_reply_max_output_tokens: int = 1_024
+    llm_tutor_reply_temperature: float = 0.3
+
+    llm_session_summary_providers: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    llm_session_summary_max_output_tokens: int = 900
+    llm_session_summary_temperature: float = 0.2
+    # O resumo lê a conversa inteira, então custa mais que uma resposta isolada.
+    llm_session_summary_max_cost_usd: float = 0.04
+
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"
     # Cache-miss price is intentionally used for conservative cost accounting.
@@ -49,12 +62,23 @@ class Settings(BaseSettings):
     gemini_input_usd_per_million: float = 0.25
     gemini_output_usd_per_million: float = 1.50
 
-    @field_validator("app_allowed_origins", "llm_fallback_providers", mode="before")
+    @field_validator(
+        "app_allowed_origins",
+        "llm_fallback_providers",
+        "llm_tutor_reply_providers",
+        "llm_session_summary_providers",
+        mode="before",
+    )
     @classmethod
     def split_csv(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @property
+    def default_provider_chain(self) -> list[str]:
+        names = [self.llm_primary_provider, *self.llm_fallback_providers]
+        return list(dict.fromkeys(name for name in names if name))
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":

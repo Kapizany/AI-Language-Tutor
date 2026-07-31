@@ -4,6 +4,12 @@ import test from "node:test";
 
 import { calculateDashboardMetrics } from "../src/lib/progress.ts";
 import {
+  formatElapsed,
+  recommendScenario,
+  sessionProgressPercent,
+  type ScenarioCatalogItem,
+} from "../src/lib/conversation.ts";
+import {
   isEmailConfirmed,
   isPasswordRecoveryCallback,
   onboardingStorageKeys,
@@ -15,6 +21,7 @@ import {
 
 test("visitante é enviado ao login ao abrir tela privada", () => {
   assert.equal(resolveDestination("dashboard", false, false), "login");
+  assert.equal(resolveDestination("sessions", false, false), "login");
 });
 
 test("usuário autenticado sem onboarding é enviado ao onboarding", () => {
@@ -147,4 +154,20 @@ test("sequência conta ontem e hoje como dois dias consecutivos", () => {
   ], 5, new Date("2026-07-31T12:00:00-03:00"));
 
   assert.equal(metrics.streak, 2);
+});
+
+test("cronômetro e progresso da conversa usam valores reais da sessão", () => {
+  assert.equal(formatElapsed(0), "00:00");
+  assert.equal(formatElapsed(625), "10:25");
+  assert.equal(sessionProgressPercent(4, 10, 30), 31);
+  assert.equal(sessionProgressPercent(30, 10, 30), 100);
+});
+
+test("cenário recomendado respeita a faixa do nível do aluno", () => {
+  const scenarios = [
+    { id: "advanced", minLevel: "B1", maxLevel: "B2" },
+    { id: "basic", minLevel: "A1", maxLevel: "A2" },
+  ] as ScenarioCatalogItem[];
+  assert.equal(recommendScenario(scenarios, "A2")?.id, "basic");
+  assert.equal(recommendScenario(scenarios, "B2")?.id, "advanced");
 });

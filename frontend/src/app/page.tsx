@@ -6,7 +6,6 @@ import {
   BarChart3,
   Bell,
   BookOpen,
-  BriefcaseBusiness,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -17,8 +16,8 @@ import {
   Flame,
   Globe2,
   GraduationCap,
-  Headphones,
   Heart,
+  History,
   Home,
   Languages,
   LockKeyhole,
@@ -27,19 +26,16 @@ import {
   Map,
   MessageCircle,
   Mic2,
-  Plane,
   Play,
   RotateCcw,
   Search,
   Settings,
   ShieldCheck,
   Sparkles,
-  Star,
   Target,
   Trash2,
   Trophy,
   UserPlus,
-  Utensils,
   Volume2,
   WandSparkles,
   X,
@@ -47,7 +43,34 @@ import {
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { AppHeader } from "@/components/app-header";
+import {
+  Conversation,
+  ConversationSummary,
+  type CompletedConversationView,
+} from "@/components/conversation";
+import { categoryLabels, levelRange, renderScenarioIcon } from "@/components/scenario-icons";
+import { SessionHistory } from "@/components/sessions";
+import { Brand, Button, ProgressRing, Stat } from "@/components/ui";
+import {
+  loadScenarioCatalog,
+  recommendScenario,
+  type ScenarioCatalogItem,
+} from "@/lib/conversation";
+import {
+  goalLabels,
+  languageDetails,
+  levelLabels,
+  mapLearnerPreferences,
+  selectableLevels,
+  shortLevel,
+  type AuthFeedback,
+  type IconType,
+  type LearnerPreferences,
+  type LearnerPreferencesRow,
+  type OnboardingData,
+  type ScreenId,
+} from "@/lib/learner";
 import {
   loadLearningContent,
   loadReviewFlashcards,
@@ -64,28 +87,7 @@ import {
   scenarioStorageKey,
   validateNewPassword,
 } from "@/lib/navigation";
-
-type ScreenId =
-  | "landing"
-  | "demo"
-  | "signup"
-  | "login"
-  | "recover"
-  | "confirm-email"
-  | "onboarding"
-  | "dashboard"
-  | "learn"
-  | "plan"
-  | "scenarios"
-  | "conversation"
-  | "summary"
-  | "vocabulary"
-  | "assessment"
-  | "progress"
-  | "profile"
-  | "privacy";
-
-type IconType = React.ComponentType<{ size?: number; strokeWidth?: number }>;
+import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 type AuthMode = "signup" | "login" | "recover" | "update";
 
@@ -93,77 +95,6 @@ type AuthFormData = {
   name: string;
   email: string;
   password: string;
-};
-
-type AuthFeedback = {
-  error?: string;
-  success?: string;
-};
-
-type TutorCorrection = {
-  original: string;
-  corrected: string;
-  explanation_pt_br: string;
-  severity: "minor" | "important" | "blocking";
-};
-
-type ConversationMessage = {
-  id: string;
-  role: "user" | "tutor";
-  text: string;
-  correction?: TutorCorrection | null;
-};
-
-type OnboardingData = {
-  targetLanguage: "en" | "es" | "fr" | "it";
-  currentLevel: "A1" | "A2" | "B1" | "B2" | "C1" | "unknown";
-  learningGoal: "travel" | "career" | "conversation" | "exam";
-  studyMinutesPerDay: 10 | 20 | 30 | 60;
-};
-
-type LearnerPreferences = OnboardingData & {
-  studyDaysPerWeek: number;
-};
-
-type LearnerPreferencesRow = {
-  target_language: OnboardingData["targetLanguage"];
-  current_level: OnboardingData["currentLevel"];
-  learning_goal: OnboardingData["learningGoal"];
-  study_minutes_per_day: OnboardingData["studyMinutesPerDay"];
-  study_days_per_week: number;
-};
-
-const mapLearnerPreferences = (row: LearnerPreferencesRow): LearnerPreferences => ({
-  targetLanguage: row.target_language,
-  currentLevel: row.current_level,
-  learningGoal: row.learning_goal,
-  studyMinutesPerDay: row.study_minutes_per_day,
-  studyDaysPerWeek: row.study_days_per_week,
-});
-
-const languageDetails: Record<OnboardingData["targetLanguage"], { flag: string; name: string }> = {
-  en: { flag: "🇺🇸", name: "Inglês" },
-  es: { flag: "🇪🇸", name: "Espanhol" },
-  fr: { flag: "🇫🇷", name: "Francês" },
-  it: { flag: "🇮🇹", name: "Italiano" },
-};
-
-const levelLabels: Record<OnboardingData["currentLevel"], string> = {
-  unknown: "Nível ainda não definido",
-  A1: "A1 · Iniciante",
-  A2: "A2 · Básico",
-  B1: "B1 · Intermediário",
-  B2: "B2 · Independente",
-  C1: "C1 · Avançado",
-};
-
-const selectableLevels: OnboardingData["currentLevel"][] = ["unknown", "A1", "A2", "B1", "B2"];
-
-const goalLabels: Record<OnboardingData["learningGoal"], string> = {
-  travel: "Viagens",
-  career: "Carreira",
-  conversation: "Conversação",
-  exam: "Preparação para provas",
 };
 
 const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: string }> = [
@@ -180,6 +111,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "scenarios", label: "Cenários", icon: Globe2, group: "Produto" },
   { id: "conversation", label: "Conversa", icon: Mic2, group: "Produto" },
   { id: "summary", label: "Resumo", icon: CheckCircle2, group: "Produto" },
+  { id: "sessions", label: "Histórico de conversas", icon: History, group: "Produto" },
   { id: "vocabulary", label: "Revisar", icon: RotateCcw, group: "Produto" },
   { id: "assessment", label: "Avaliação", icon: GraduationCap, group: "Progresso" },
   { id: "progress", label: "Progresso", icon: BarChart3, group: "Progresso" },
@@ -194,86 +126,13 @@ const appScreens = new Set<ScreenId>([
   "scenarios",
   "conversation",
   "summary",
+  "sessions",
   "vocabulary",
   "assessment",
   "progress",
   "profile",
   "privacy",
 ]);
-
-function Brand({ compact = false, onClick }: { compact?: boolean; onClick?: () => void }) {
-  return (
-    <button className="brand" aria-label="Ir para início" data-compact={compact} onClick={onClick}>
-      <span className="brand-mark">
-        <Sparkles size={compact ? 17 : 20} />
-      </span>
-      {!compact && <span>Lume</span>}
-    </button>
-  );
-}
-
-function Button({
-  children,
-  variant = "primary",
-  icon,
-  onClick,
-  type = "button",
-  full = false,
-  disabled = false,
-}: {
-  children: React.ReactNode;
-  variant?: "primary" | "secondary" | "ghost" | "dark" | "danger";
-  icon?: React.ReactNode;
-  onClick?: () => void;
-  type?: "button" | "submit";
-  full?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type={type}
-      className={`button button-${variant}${full ? " button-full" : ""}`}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      {children}
-      {icon}
-    </button>
-  );
-}
-
-function ProgressRing({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="progress-ring" style={{ "--progress": `${value * 3.6}deg` } as React.CSSProperties}>
-      <div>
-        <strong>{value}%</strong>
-        <span>{label}</span>
-      </div>
-    </div>
-  );
-}
-
-function Stat({
-  icon,
-  value,
-  label,
-  tone = "teal",
-}: {
-  icon: React.ReactNode;
-  value: string;
-  label: string;
-  tone?: "teal" | "coral" | "amber" | "blue";
-}) {
-  return (
-    <div className={`stat stat-${tone}`}>
-      <span className="stat-icon">{icon}</span>
-      <div>
-        <strong>{value}</strong>
-        <span>{label}</span>
-      </div>
-    </div>
-  );
-}
 
 function Landing({ go }: { go: (id: ScreenId) => void }) {
   const showDetails = () => document.getElementById("como-funciona")?.scrollIntoView({ behavior: "smooth" });
@@ -694,68 +553,10 @@ function Onboarding({
   );
 }
 
-function AppHeader({
-  title,
-  subtitle,
-  displayName,
-  preferences,
-  onNavigate,
-}: {
-  title: string;
-  subtitle?: string;
-  displayName?: string;
-  preferences?: LearnerPreferences | null;
-  onNavigate?: (screen: ScreenId) => void;
-}) {
-  const language = preferences ? languageDetails[preferences.targetLanguage] : languageDetails.en;
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [readNotifications, setReadNotifications] = useState<string[]>([]);
-  const notifications: Array<{ id: string; title: string; detail: string; screen: ScreenId }> = [
-    {
-      id: "daily-goal",
-      title: "Sua meta diária está esperando",
-      detail: `Reserve ${preferences?.studyMinutesPerDay || 20} minutos para uma atividade.`,
-      screen: "learn",
-    },
-    {
-      id: "review",
-      title: "Revisão disponível",
-      detail: `Pratique os cartões de ${language.name} e fortaleça sua memória.`,
-      screen: "vocabulary",
-    },
-    {
-      id: "plan",
-      title: "Continue seu plano",
-      detail: `Seu plano considera ${preferences?.studyDaysPerWeek || 5} dias de estudo por semana.`,
-      screen: "plan",
-    },
-  ];
-  const unreadCount = notifications.filter((item) => !readNotifications.includes(item.id)).length;
-
-  const openNotification = (id: string, screen: ScreenId) => {
-    setReadNotifications((current) => current.includes(id) ? current : [...current, id]);
-    setNotificationsOpen(false);
-    onNavigate?.(screen);
-  };
-
-  return (
-    <header className="app-header">
-      <div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
-      <div className="app-header-tools">
-        <button className="language-switch" disabled title="A troca de idioma ficará disponível nas configurações"><span>{language.flag}</span> {language.name}</button>
-        <div className="notification-center">
-          <button className="icon-button" title="Notificações" aria-label={`Notificações: ${unreadCount} não lidas`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={20}/>{unreadCount > 0 && <i>{unreadCount}</i>}</button>
-          {notificationsOpen && <div className="notification-panel"><header><strong>Notificações</strong>{unreadCount > 0 && <button onClick={() => setReadNotifications(notifications.map((item) => item.id))}>Marcar como lidas</button>}</header>{notifications.map((item) => <button key={item.id} className={readNotifications.includes(item.id) ? "read" : ""} onClick={() => openNotification(item.id, item.screen)}><span/><div><strong>{item.title}</strong><p>{item.detail}</p></div><ChevronRight/></button>)}</div>}
-        </div>
-        <div className="user-avatar">{(displayName || "Aluno").slice(0, 2).toUpperCase()}</div>
-      </div>
-    </header>
-  );
-}
-
-function Dashboard({ go, displayName, preferences, session, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; session: Session | null; startScenario: (scenario: Scenario) => void }) {
-  const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : "A1";
+function Dashboard({ go, displayName, preferences, session, scenarios, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; session: Session | null; scenarios: ScenarioCatalogItem[]; startScenario: (scenario: ScenarioCatalogItem) => void }) {
+  const level = shortLevel(preferences?.currentLevel || "unknown");
   const language = preferences ? languageDetails[preferences.targetLanguage].name : "Inglês";
+  const recommended = recommendScenario(scenarios, preferences?.currentLevel || "unknown");
   const [metrics, setMetrics] = useState(() => calculateDashboardMetrics([], preferences?.studyDaysPerWeek || 5));
   const [metricsLoading, setMetricsLoading] = useState(true);
 
@@ -774,15 +575,15 @@ function Dashboard({ go, displayName, preferences, session, startScenario }: { g
           .select("completed_at")
           .eq("user_id", session.user.id),
         supabase
-          .from("llm_usage_events")
-          .select("created_at")
+          .from("conversation_sessions")
+          .select("started_at")
           .eq("user_id", session.user.id)
-          .eq("status", "succeeded"),
+          .gt("learner_message_count", 0),
       ]);
       if (!active) return;
       const conversationDays = new Set<string>();
       const conversationTimestamps = (conversationResult.data || [])
-        .map(({ created_at }) => created_at)
+        .map(({ started_at }) => started_at)
         .filter((timestamp) => {
           const day = timestamp.slice(0, 10);
           if (conversationDays.has(day)) return false;
@@ -813,17 +614,21 @@ function Dashboard({ go, displayName, preferences, session, startScenario }: { g
       </div>
       <section className="dashboard-grid">
         <div className="main-column">
-          <div className="section-heading"><div><span className="eyebrow">PRÓXIMA ATIVIDADE</span><h2>Continue seu plano</h2></div><button onClick={() => go("plan")}>Ver plano completo <ArrowRight size={16}/></button></div>
-          <article className="next-lesson">
-            <div className="lesson-visual"><div className="coffee-cup">☕</div><span>Conversação</span></div>
-            <div className="lesson-copy"><span className="level-chip">{level} · COTIDIANO</span><h3>Um café, por favor</h3><p>Pratique pedidos, tamanhos e preferências em {language}.</p><div className="lesson-meta"><span><Clock3 size={16}/> {preferences?.studyMinutesPerDay || 10} min</span><span><MessageCircle size={16}/> Conversa guiada</span></div><Button onClick={() => startScenario(scenarioData[0])} icon={<Play size={17} fill="currentColor"/>}>Começar atividade</Button></div>
-            <ProgressRing value={metrics.weeklyPercent} label="semana"/>
-          </article>
+          <div className="section-heading"><div><span className="eyebrow">PRÓXIMA CONVERSA</span><h2>Pratique falando</h2></div><button onClick={() => go("sessions")}>Ver histórico <ArrowRight size={16}/></button></div>
+          {recommended ? (
+            <article className="next-lesson">
+              <div className="lesson-visual"><div className="coffee-cup">{renderScenarioIcon(recommended.icon)}</div><span>{categoryLabels[recommended.category]}</span></div>
+              <div className="lesson-copy"><span className="level-chip">{levelRange(recommended.minLevel, recommended.maxLevel)} · {categoryLabels[recommended.category].toUpperCase()}</span><h3>{recommended.title}</h3><p>{recommended.description}</p><div className="lesson-meta"><span><Clock3 size={16}/> {recommended.plannedMinutes} min</span><span><MessageCircle size={16}/> Conversa guiada em {language}</span></div><Button onClick={() => startScenario(recommended)} icon={<Play size={17} fill="currentColor"/>}>Começar conversa</Button></div>
+              <ProgressRing value={metrics.weeklyPercent} label="semana"/>
+            </article>
+          ) : (
+            <article className="next-lesson"><div className="lesson-copy"><h3>Cenários indisponíveis</h3><p>Não foi possível carregar o catálogo de conversas agora.</p></div></article>
+          )}
           <div className="section-heading compact"><h2>Pratique do seu jeito</h2></div>
           <div className="quick-grid">
-            <button onClick={() => go("scenarios")}><span className="quick-icon coral"><MessageCircle/></span><div><strong>Conversar</strong><small>Escolha um cenário</small></div><ChevronRight/></button>
+            <button onClick={() => go("scenarios")}><span className="quick-icon coral"><MessageCircle/></span><div><strong>Conversar</strong><small>{scenarios.length ? `${scenarios.length} cenários disponíveis` : "Escolha um cenário"}</small></div><ChevronRight/></button>
             <button onClick={() => go("learn")}><span className="quick-icon teal"><BookOpen/></span><div><strong>Aprender</strong><small>Leitura, gramática e flashcards</small></div><ChevronRight/></button>
-            <button onClick={() => go("vocabulary")}><span className="quick-icon blue"><Zap/></span><div><strong>Revisar</strong><small>12 palavras para hoje</small></div><ChevronRight/></button>
+            <button onClick={() => go("vocabulary")}><span className="quick-icon blue"><Zap/></span><div><strong>Revisar</strong><small>Flashcards do seu nível</small></div><ChevronRight/></button>
           </div>
         </div>
         <aside className="side-column">
@@ -835,280 +640,158 @@ function Dashboard({ go, displayName, preferences, session, startScenario }: { g
   );
 }
 
-function Plan({ go, displayName, preferences, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; startScenario: (scenario: Scenario) => void }) {
-  const days = [
-    { day: "SEG", date: "20", done: true, title: "Apresentações", type: "Conversa", time: "10 min" },
-    { day: "TER", date: "21", done: true, title: "Revisão de vocabulário", type: "Revisão", time: "8 min" },
-    { day: "QUA", date: "22", active: true, title: "Um café, por favor", type: "Conversa", time: "10 min" },
-    { day: "QUI", date: "23", title: "Present simple", type: "Gramática", time: "15 min" },
-    { day: "SEX", date: "24", title: "Minha rotina", type: "Escrita", time: "10 min" },
-  ];
+const weekdayNames = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
+
+/**
+ * O plano adaptativo é a Fase 9 do roadmap. Até lá esta tela mostra apenas o que
+ * é verificável: a rotina escolhida pelo aluno, os dias em que ele realmente
+ * estudou nesta semana e a próxima conversa sugerida. Nenhuma métrica inventada.
+ */
+function Plan({ go, displayName, preferences, session, scenarios, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; session: Session | null; scenarios: ScenarioCatalogItem[]; startScenario: (scenario: ScenarioCatalogItem) => void }) {
+  const [metrics, setMetrics] = useState(() => calculateDashboardMetrics([], preferences?.studyDaysPerWeek || 5));
+  const [loading, setLoading] = useState(Boolean(session));
+  const recommended = recommendScenario(scenarios, preferences?.currentLevel || "unknown");
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return;
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      const [learningResult, conversationResult] = await Promise.all([
+        supabase.from("learning_activity_events").select("completed_at").eq("user_id", session.user.id),
+        supabase
+          .from("conversation_sessions")
+          .select("started_at")
+          .eq("user_id", session.user.id)
+          .gt("learner_message_count", 0),
+      ]);
+      if (!active) return;
+      setMetrics(calculateDashboardMetrics([
+        ...(learningResult.data || []).map(({ completed_at }) => completed_at),
+        ...(conversationResult.data || []).map(({ started_at }) => started_at),
+      ], preferences?.studyDaysPerWeek || 5));
+      setLoading(false);
+    };
+    void load();
+    return () => { active = false; };
+  }, [preferences?.studyDaysPerWeek, session]);
+
+  const monday = new Date();
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const todayIndex = (new Date().getDay() + 6) % 7;
+
   return (
     <div className="screen-content">
-      <AppHeader title="Seu plano de estudo" subtitle="Sua rotina personalizada" displayName={displayName} preferences={preferences}/>
+      <AppHeader title="Sua rotina de estudo" subtitle="O que você definiu e o que já cumpriu nesta semana." displayName={displayName} preferences={preferences} onNavigate={go}/>
       <div className="plan-overview">
-        <div><span className="eyebrow">META DO MÊS</span><h2>{preferences ? goalLabels[preferences.learningGoal] : "Conversação"}</h2><p>Baseado no seu nível {preferences ? levelLabels[preferences.currentLevel] : "inicial"} e em {preferences?.studyMinutesPerDay || 20} minutos por dia.</p></div>
-        <div className="plan-progress"><strong>68%</strong><div><i/></div><span>8h 10min de 12h</span></div>
-        <button onClick={() => go("profile")}><Settings size={18}/> Ajustar plano</button>
+        <div><span className="eyebrow">SEU OBJETIVO</span><h2>{preferences ? goalLabels[preferences.learningGoal] : "Conversação"}</h2><p>{preferences ? levelLabels[preferences.currentLevel] : "Nível inicial"} · {preferences?.studyMinutesPerDay || 20} minutos por dia · {metrics.weeklyTarget} {metrics.weeklyTarget === 1 ? "dia" : "dias"} por semana.</p></div>
+        <div className="plan-progress"><strong>{loading ? "…" : `${metrics.weeklyPercent}%`}</strong><div><i style={{ width: `${metrics.weeklyPercent}%` }}/></div><span>{metrics.activeDaysThisWeek} de {metrics.weeklyTarget} dias nesta semana</span></div>
+        <button onClick={() => go("profile")}><Settings size={18}/> Ajustar rotina</button>
       </div>
       <div className="week-layout">
         <section className="week-list">
-          <div className="section-heading compact"><h2>Esta semana</h2><span>3 de 5 atividades</span></div>
-          {days.map((item) => (
-            <article key={item.day} className={`day-row${item.active ? " active" : ""}${item.done ? " complete" : ""}`}>
-              <div className="date-block"><span>{item.day}</span><strong>{item.date}</strong></div>
-              <span className="timeline-dot">{item.done ? <Check size={16}/> : item.active ? <Play size={15}/> : ""}</span>
-              <div className="day-copy"><span>{item.type}</span><h3>{item.title}</h3><small><Clock3 size={14}/> {item.time}</small></div>
-              {item.active ? <Button onClick={() => startScenario(scenarioData[0])}>Começar</Button> : <button className="more-button" disabled title="Atividade ainda indisponível">•••</button>}
-            </article>
-          ))}
+          <div className="section-heading compact"><h2>Esta semana</h2><span>{loading ? "carregando…" : `${metrics.activeDaysThisWeek} ${metrics.activeDaysThisWeek === 1 ? "dia estudado" : "dias estudados"}`}</span></div>
+          {weekdayNames.map((label, index) => {
+            const date = new Date(monday);
+            date.setDate(monday.getDate() + index);
+            const studied = metrics.activeWeekdays[index];
+            const isToday = index === todayIndex;
+            return (
+              <article key={label} className={`day-row${isToday ? " active" : ""}${studied ? " complete" : ""}`}>
+                <div className="date-block"><span>{label}</span><strong>{date.getDate()}</strong></div>
+                <span className="timeline-dot">{studied ? <Check size={16}/> : isToday ? <Play size={15}/> : ""}</span>
+                <div className="day-copy"><span>{studied ? "Concluído" : isToday ? "Hoje" : "Sem registro"}</span><h3>{studied ? "Você estudou neste dia" : isToday ? "Ainda dá tempo hoje" : "Nenhuma atividade registrada"}</h3><small><Clock3 size={14}/> meta de {preferences?.studyMinutesPerDay || 20} min</small></div>
+                {isToday && recommended ? <Button onClick={() => startScenario(recommended)}>Conversar</Button> : <button className="more-button" disabled title="Registro apenas informativo">•••</button>}
+              </article>
+            );
+          })}
         </section>
         <aside className="plan-aside">
-          <div className="insight-card"><Sparkles/><span>INSIGHT DO TUTOR</span><h3>Você aprende melhor conversando.</h3><p>Incluímos mais duas práticas guiadas nesta semana com base no seu desempenho.</p></div>
-          <div className="month-card"><h3>Próximos marcos</h3><div><span>01</span><p><strong>Fazer um pedido completo</strong><small>Meta desta semana</small></p><CheckCircle2/></div><div><span>02</span><p><strong>Descrever sua rotina</strong><small>Próxima semana</small></p></div><div><span>03</span><p><strong>Manter 5 min de conversa</strong><small>Meta do mês</small></p></div></div>
+          <div className="insight-card"><Sparkles/><span>PRÓXIMO PASSO</span><h3>{recommended ? recommended.title : "Escolha um cenário"}</h3><p>{recommended ? recommended.objective : "O catálogo de conversas não pôde ser carregado."}</p>{recommended && <Button variant="secondary" full onClick={() => startScenario(recommended)}>Começar agora</Button>}</div>
+          <div className="month-card"><h3>Como esta tela funciona</h3><div><span>01</span><p><strong>Rotina definida por você</strong><small>Ajuste dias e minutos no perfil.</small></p></div><div><span>02</span><p><strong>Dias marcados por atividade real</strong><small>Lições, exercícios e conversas contam.</small></p></div><div><span>03</span><p><strong>Plano adaptativo em construção</strong><small>Tarefas geradas pelo tutor virão em uma etapa futura.</small></p></div></div>
         </aside>
       </div>
     </div>
   );
 }
-
-type Scenario = {
-  id: string;
-  icon: IconType;
-  title: string;
-  desc: string;
-  objective: string;
-  category: "Cotidiano" | "Profissional" | "Viagem";
-  level: string;
-  time: string;
-  color: string;
-};
-
-const scenarioData: Scenario[] = [
-  { id: "coffee", icon: Coffee, title: "Na cafeteria", desc: "Faça pedidos e fale sobre preferências.", objective: "Faça um pedido completo e pergunte o preço.", category: "Cotidiano", level: "A2", time: "10 min", color: "coral" },
-  { id: "airport", icon: Plane, title: "No aeroporto", desc: "Check-in, bagagem e orientações.", objective: "Faça o check-in e confirme o portão de embarque.", category: "Viagem", level: "A2", time: "12 min", color: "blue" },
-  { id: "interview", icon: BriefcaseBusiness, title: "Entrevista de emprego", desc: "Conte sua experiência e objetivos.", objective: "Apresente sua experiência e responda sobre seus objetivos.", category: "Profissional", level: "B1", time: "15 min", color: "teal" },
-  { id: "restaurant", icon: Utensils, title: "No restaurante", desc: "Reserve, escolha e peça a conta.", objective: "Escolha um prato, faça perguntas e peça a conta.", category: "Cotidiano", level: "A2", time: "10 min", color: "amber" },
-  { id: "free", icon: Globe2, title: "Conversa livre", desc: "Escolha qualquer assunto com o tutor.", objective: "Mantenha uma conversa livre no idioma estudado.", category: "Cotidiano", level: "A1–B2", time: "Livre", color: "purple" },
-  { id: "meeting", icon: Headphones, title: "Reunião de trabalho", desc: "Opine, concorde e peça esclarecimentos.", objective: "Compartilhe uma opinião e peça um esclarecimento.", category: "Profissional", level: "B1", time: "15 min", color: "navy" },
-];
-
-const scenarioOpenings: Record<OnboardingData["targetLanguage"], Record<string, string>> = {
-  en: {
-    coffee: "Good afternoon! Welcome. What can I get started for you?",
-    airport: "Good morning! May I see your passport and booking confirmation?",
-    interview: "Welcome! Could you start by telling me a little about yourself?",
-    restaurant: "Good evening! Do you have a reservation?",
-    free: "Hello! What would you like to talk about today?",
-    meeting: "Thanks for joining. What is your view on today’s proposal?",
-  },
-  es: {
-    coffee: "¡Buenas tardes! ¿Qué te gustaría pedir?",
-    airport: "¡Buenos días! ¿Puedo ver tu pasaporte y tu reserva?",
-    interview: "¡Bienvenido! ¿Puedes contarme un poco sobre ti?",
-    restaurant: "¡Buenas noches! ¿Tienes una reserva?",
-    free: "¡Hola! ¿De qué te gustaría hablar hoy?",
-    meeting: "Gracias por participar. ¿Qué opinas de la propuesta de hoy?",
-  },
-  fr: {
-    coffee: "Bonjour ! Qu’est-ce que vous souhaitez commander ?",
-    airport: "Bonjour ! Puis-je voir votre passeport et votre réservation ?",
-    interview: "Bienvenue ! Pouvez-vous vous présenter brièvement ?",
-    restaurant: "Bonsoir ! Avez-vous une réservation ?",
-    free: "Bonjour ! De quoi souhaitez-vous parler aujourd’hui ?",
-    meeting: "Merci d’être là. Que pensez-vous de la proposition ?",
-  },
-  it: {
-    coffee: "Buon pomeriggio! Cosa desidera ordinare?",
-    airport: "Buongiorno! Posso vedere il passaporto e la prenotazione?",
-    interview: "Benvenuto! Può raccontarmi qualcosa di lei?",
-    restaurant: "Buonasera! Ha una prenotazione?",
-    free: "Ciao! Di cosa vorresti parlare oggi?",
-    meeting: "Grazie per essere qui. Cosa ne pensa della proposta?",
-  },
-};
 
 function Scenarios({
   displayName,
   preferences,
+  scenarios,
+  catalogError,
+  reloadCatalog,
   selectScenario,
+  go,
 }: {
   displayName: string;
   preferences: LearnerPreferences | null;
-  selectScenario: (scenario: Scenario) => void;
+  scenarios: ScenarioCatalogItem[];
+  catalogError: string;
+  reloadCatalog: () => void;
+  selectScenario: (scenario: ScenarioCatalogItem) => void;
+  go: (id: ScreenId) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<"Todos" | Scenario["category"]>("Todos");
-  const visibleScenarios = scenarioData.filter((scenario) =>
-    (category === "Todos" || scenario.category === category)
-    && `${scenario.title} ${scenario.desc}`.toLocaleLowerCase("pt-BR").includes(query.trim().toLocaleLowerCase("pt-BR"))
+  const [category, setCategory] = useState<"all" | ScenarioCatalogItem["category"]>("all");
+  const normalized = query.trim().toLocaleLowerCase("pt-BR");
+  const visibleScenarios = scenarios.filter((scenario) =>
+    (category === "all" || scenario.category === category)
+    && `${scenario.title} ${scenario.description}`.toLocaleLowerCase("pt-BR").includes(normalized)
   );
+  const recommended = recommendScenario(scenarios, preferences?.currentLevel || "unknown");
+
+  if (catalogError) {
+    return (
+      <div className="screen-content">
+        <AppHeader title="Escolha uma conversa" displayName={displayName} preferences={preferences} onNavigate={go}/>
+        <div className="learning-loading"><MessageCircle/><p>{catalogError}</p><Button onClick={reloadCatalog}>Tentar novamente</Button></div>
+      </div>
+    );
+  }
+
+  if (!scenarios.length) {
+    return (
+      <div className="screen-content">
+        <AppHeader title="Escolha uma conversa" displayName={displayName} preferences={preferences} onNavigate={go}/>
+        <div className="learning-loading"><Sparkles/><p>Carregando os cenários...</p></div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen-content">
-      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida." displayName={displayName} preferences={preferences}/>
-      <div className="filter-row"><div className="search-box"><Search size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cenário..."/></div><div className="filter-pills">{(["Todos","Cotidiano","Profissional","Viagem"] as const).map((item) => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div></div>
-      <div className="featured-scenario">
-        <div><span className="eyebrow light">RECOMENDADO PARA VOCÊ</span><h2>Desafio da semana</h2><p>Converse por cinco minutos sem recorrer ao português.</p><div><span><Clock3 size={16}/> 10 min</span><span><Target size={16}/> Fluência</span></div><Button onClick={() => selectScenario(scenarioData[0])} variant="secondary" icon={<ArrowRight size={17}/>}>Aceitar desafio</Button></div>
-        <div className="challenge-art"><div className="speech-orb"><MessageCircle/></div><span>5:00</span></div>
+      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida." displayName={displayName} preferences={preferences} onNavigate={go}/>
+      <div className="filter-row">
+        <div className="search-box"><Search size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cenário..."/></div>
+        <div className="filter-pills">
+          {([["all", "Todos"], ["daily", "Cotidiano"], ["professional", "Profissional"], ["travel", "Viagem"]] as const).map(([value, label]) => (
+            <button key={value} className={category === value ? "active" : ""} onClick={() => setCategory(value)}>{label}</button>
+          ))}
+        </div>
       </div>
+      {recommended && (
+        <div className="featured-scenario">
+          <div><span className="eyebrow light">RECOMENDADO PARA VOCÊ</span><h2>{recommended.title}</h2><p>{recommended.objective}</p><div><span><Clock3 size={16}/> {recommended.plannedMinutes} min</span><span><Target size={16}/> {levelRange(recommended.minLevel, recommended.maxLevel)}</span></div><Button onClick={() => selectScenario(recommended)} variant="secondary" icon={<ArrowRight size={17}/>}>Começar</Button></div>
+          <div className="challenge-art"><div className="speech-orb"><MessageCircle/></div><span>{recommended.plannedMinutes}:00</span></div>
+        </div>
+      )}
       <div className="scenario-grid">
-        {visibleScenarios.map((scenario) => {
-          const { icon: Icon, title, desc, level, time, color } = scenario;
-          return <button key={title} className="scenario-card" onClick={() => selectScenario(scenario)}>
-            <span className={`scenario-art ${color}`}><Icon/></span>
-            <div><span className="level-chip">{level}</span><h3>{title}</h3><p>{desc}</p><div className="scenario-meta"><span><Clock3 size={14}/>{time}</span><span>Começar <ArrowRight size={15}/></span></div></div>
-          </button>;
-        })}
+        {visibleScenarios.map((scenario) => (
+            <button key={scenario.id} className="scenario-card" onClick={() => selectScenario(scenario)}>
+              <span className={`scenario-art ${scenario.accent}`}>{renderScenarioIcon(scenario.icon)}</span>
+              <div>
+                <span className="level-chip">{levelRange(scenario.minLevel, scenario.maxLevel)}</span>
+                <h3>{scenario.title}</h3>
+                <p>{scenario.description}</p>
+                <div className="scenario-meta"><span><Clock3 size={14}/>{scenario.plannedMinutes} min</span><span>{categoryLabels[scenario.category]}</span><span>Começar <ArrowRight size={15}/></span></div>
+              </div>
+            </button>
+        ))}
       </div>
       {visibleScenarios.length === 0 && <p className="form-message">Nenhum cenário encontrado.</p>}
-    </div>
-  );
-}
-
-function Conversation({
-  go,
-  scenario,
-  preferences,
-  session,
-}: {
-  go: (id: ScreenId) => void;
-  scenario: Scenario;
-  preferences: LearnerPreferences | null;
-  session: Session | null;
-}) {
-  const ScenarioIcon = scenario.icon;
-  const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : scenario.level;
-  const targetLanguage = preferences?.targetLanguage || "en";
-  const opening = scenarioOpenings[targetLanguage][scenario.id];
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [answer, setAnswer] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
-
-  const send = async () => {
-    const text = answer.trim();
-    if (!text || sending) return;
-    if (!apiUrl) {
-      setError("A URL do backend ainda não foi configurada.");
-      return;
-    }
-    if (!session?.access_token) {
-      setError("Sua sessão expirou. Entre novamente para continuar.");
-      return;
-    }
-
-    const userMessage: ConversationMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      text,
-    };
-    setMessages((current) => [...current, userMessage]);
-    setAnswer("");
-    setError("");
-    setSending(true);
-
-    try {
-      const response = await fetch(`${apiUrl}/api/v1/ai/tutor/reply`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: text,
-          target_language: targetLanguage,
-          learner_level: preferences?.currentLevel === "C1" ? "B2" : preferences?.currentLevel || "unknown",
-          scenario: scenario.id,
-          request_id: crypto.randomUUID(),
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.detail || "Não foi possível obter a resposta do tutor.");
-      }
-      setMessages((current) => [
-        ...current,
-        {
-          id: payload.request_id,
-          role: "tutor",
-          text: payload.result.reply,
-          correction: payload.result.correction,
-        },
-      ]);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "O tutor está temporariamente indisponível.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="conversation-screen">
-      <header className="conversation-header">
-        <button onClick={() => go("scenarios")}><ArrowLeft/></button>
-        <div className="conversation-title"><span className="mini-avatar">Lu</span><div><strong>{scenario.title}</strong><small><i/> Lume · {level}</small></div></div>
-        <div className="session-timer"><Clock3/> 06:42</div>
-        <Button variant="ghost" disabled>Encerrar</Button>
-      </header>
-      <main className="conversation-body">
-        <div className="conversation-context"><ScenarioIcon/><div><span>SEU OBJETIVO</span><strong>{scenario.objective}</strong></div><button disabled title="Dicas estarão disponíveis com a conversa por IA">Ver dicas</button></div>
-        <div className="conversation-messages">
-          <div className="time-divider"><span>Início da prática</span></div>
-          <div className="chat-message tutor-message"><div className="mini-avatar">Lu</div><div><span>{opening}</span><button disabled title="Síntese de voz ainda não disponível"><Volume2 size={15}/> Ouvir</button></div></div>
-          {messages.map((message) => (
-            <div key={message.id}>
-              <div className={`chat-message ${message.role === "user" ? "user-message" : "tutor-message"}`}>
-                {message.role === "tutor" && <div className="mini-avatar">Lu</div>}
-                <div><span>{message.text}</span></div>
-              </div>
-              {message.correction && (
-                <div className="inline-feedback compact-feedback">
-                  <div className="feedback-title"><CheckCircle2/><strong>Uma correção para você</strong></div>
-                  <div className="compare"><del>{message.correction.original}</del><ArrowRight size={15}/><ins>{message.correction.corrected}</ins></div>
-                  <p>{message.correction.explanation_pt_br}</p>
-                </div>
-              )}
-            </div>
-          ))}
-          {sending && <div className="form-message">Lume está preparando uma resposta...</div>}
-          {error && <div className="form-message form-error" role="alert">{error}</div>}
-        </div>
-        <div className="conversation-compose">
-          <div className="hint-row"><button disabled title="Disponível com o tutor de IA"><Sparkles size={15}/> Preciso de uma dica</button><button disabled title="Disponível com o tutor de IA"><Languages size={15}/> Traduzir pergunta</button></div>
-          <div className="compose-box"><button className="mic-button" disabled title="Entrada por voz ainda não disponível"><Mic2/></button><textarea aria-label="Responder" value={answer} disabled={sending} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Digite sua resposta no idioma estudado..."/><button className="send-button" disabled={!answer.trim() || sending} onClick={() => void send()} aria-label="Enviar mensagem"><ArrowRight/></button></div>
-          <small>Pressione Enter para enviar · Shift + Enter para nova linha</small>
-        </div>
-      </main>
-      <aside className="conversation-side">
-        <div><span className="eyebrow">PROGRESSO DA SESSÃO</span><ProgressRing value={64} label="objetivo"/></div>
-        <div className="session-goals"><h3>Nesta conversa</h3><p className="done"><CheckCircle2/> Cumprimentar</p><p className="done"><CheckCircle2/> Fazer o pedido</p><p><i/> Perguntar o preço</p></div>
-        <div className="live-words"><h3>Palavras desta conversa</h3><p>O vocabulário aparecerá conforme a conversa avançar.</p></div>
-      </aside>
-    </div>
-  );
-}
-
-function Summary({ go }: { go: (id: ScreenId) => void }) {
-  return (
-    <div className="screen-content summary-screen">
-      <div className="summary-hero">
-        <div className="celebration">✦</div><span className="eyebrow light">SESSÃO CONCLUÍDA</span><h1>Muito bem, Carlos!</h1><p>Você completou o pedido e manteve a conversa em inglês.</p>
-        <div className="summary-stats"><div><strong>9:42</strong><span>tempo</span></div><div><strong>12</strong><span>mensagens</span></div><div><strong>4</strong><span>novas palavras</span></div></div>
-      </div>
-      <div className="summary-layout">
-        <main>
-          <div className="score-card"><div><span className="eyebrow">DESEMPENHO DA SESSÃO</span><h2>Você está ganhando confiança</h2><p>Seu vocabulário foi claro e você respondeu sem longas pausas.</p></div><ProgressRing value={84} label="sessão"/></div>
-          <div className="feedback-grid">
-            <article className="strength-card"><div className="card-title"><Star/><strong>Pontos fortes</strong></div><p><Check/> Usou frases completas</p><p><Check/> Respondeu no contexto</p><p><Check/> Manteve um tom educado</p></article>
-            <article className="focus-card"><div className="card-title"><Target/><strong>Para melhorar</strong></div><p><span>1</span><div><strong>Tamanhos de bebidas</strong><small>Use “large” em vez de “big”.</small></div></p><p><span>2</span><div><strong>Pedidos mais naturais</strong><small>Prefira “I’d like...” a “I want...”.</small></div></p></article>
-          </div>
-          <div className="saved-words"><div className="section-heading compact"><div><span className="eyebrow">VOCABULÁRIO</span><h2>Palavras da sessão</h2></div><button onClick={() => go("vocabulary")}>Ver todas</button></div><div>{["whole milk","oat milk","large","How much is it?"].map((word)=><span key={word}>{word}<button disabled title="Síntese de voz ainda não disponível"><Volume2 size={14}/></button></span>)}</div></div>
-        </main>
-        <aside>
-          <div className="next-card"><span className="eyebrow">PRÓXIMO PASSO</span><div className="next-icon"><BookOpen/></div><h3>Revise o que aprendeu</h3><p>Uma revisão rápida ajuda a fixar as quatro novas expressões.</p><Button full onClick={() => go("vocabulary")}>Revisar agora</Button><button onClick={() => go("dashboard")}>Voltar ao início</button></div>
-        </aside>
-      </div>
+      <p className="scenario-footnote">Você tem três conversas por dia. Retomar uma conversa aberta não consome uma nova.</p>
     </div>
   );
 }
@@ -1155,10 +838,10 @@ function Progress({ displayName, preferences, session }: { displayName: string; 
           .eq("user_id", session.user.id)
           .order("completed_at"),
         supabase
-          .from("llm_usage_events")
+          .from("conversation_messages")
           .select("created_at")
           .eq("user_id", session.user.id)
-          .eq("status", "succeeded")
+          .eq("role", "learner")
           .order("created_at"),
       ]);
       if (!active) return;
@@ -1386,7 +1069,7 @@ function Privacy({
       <div className="privacy-layout">
         <main>
           <div className="privacy-principle"><ShieldCheck/><div><span className="eyebrow">NOSSO PRINCÍPIO</span><h2>Seus dados existem para ajudar você — e continuam sendo seus.</h2><p>Áudios são apagados após a transcrição. Você pode baixar ou excluir seus dados a qualquer momento.</p></div></div>
-          <section className="data-section"><h2>Seus dados</h2><article><span className="data-icon"><MessageCircle/></span><div><strong>Conversas e correções</strong><p>Usadas para manter seu histórico e personalizar atividades.</p><small>Nenhuma conversa persistida ainda</small></div><button disabled>Gerenciar</button></article><article><span className="data-icon"><WandSparkles/></span><div><strong>Memórias do tutor</strong><p>Objetivos, preferências e dificuldades que você autorizou.</p><small>Memória ainda não ativada</small></div><button disabled>Visualizar</button></article><article><span className="data-icon"><Mic2/></span><div><strong>Gravações de voz</strong><p>Processadas para transcrição e excluídas automaticamente.</p><small className="safe"><CheckCircle2/> Nenhum áudio armazenado</small></div></article></section>
+          <section className="data-section"><h2>Seus dados</h2><article><span className="data-icon"><MessageCircle/></span><div><strong>Conversas e correções</strong><p>Persistidas para compor seu histórico e seus resumos.</p><small className="safe"><CheckCircle2/> Protegidas por usuário com RLS</small></div></article><article><span className="data-icon"><WandSparkles/></span><div><strong>Memórias do tutor</strong><p>Objetivos, preferências e dificuldades que você autorizou.</p><small>Memória de longo prazo ainda não ativada</small></div><button disabled>Visualizar</button></article><article><span className="data-icon"><Mic2/></span><div><strong>Gravações de voz</strong><p>O recurso de voz ainda não foi ativado e nenhum áudio é coletado.</p><small className="safe"><CheckCircle2/> Nenhum áudio armazenado</small></div></article></section>
           <section className="export-section"><div><Download/><div><h3>Baixe uma cópia dos seus dados</h3><p>A exportação será implementada junto ao backend.</p></div><Button variant="secondary" disabled>Exportação em breve</Button></div></section>
           <section className="danger-zone">
             <h2>Excluir conta</h2>
@@ -1611,6 +1294,15 @@ function LearningCenter({
     }
   };
 
+  const displayedReadingCorrectAnswers = readingCorrectAnswers
+    + (
+      selectedAnswer !== null
+      && readingQuestion
+      && selectedAnswer === readingQuestion.answer
+        ? 1
+        : 0
+    );
+
   const nextReadingQuestion = () => {
     if (!readingActivity || readingQuestionIndex >= readingActivity.questions.length - 1) return;
     setReadingQuestionIndex((current) => current + 1);
@@ -1829,7 +1521,7 @@ function LearningCenter({
                 <p>{readingQuestion.explanation}</p>
                 {readingQuestionIndex < readingActivity.questions.length - 1
                   ? <Button onClick={nextReadingQuestion} icon={<ArrowRight/>}>Próxima pergunta</Button>
-                  : <strong>Leitura concluída: {Math.round((readingCorrectAnswers / readingActivity.questions.length) * 100)}%{saved && " · progresso salvo"}</strong>}
+                  : <strong>Leitura concluída: {Math.round((displayedReadingCorrectAnswers / readingActivity.questions.length) * 100)}%{saved && " · progresso salvo"}</strong>}
               </div>
             )}
           </section>
@@ -1869,8 +1561,9 @@ function AppNav({
   const navItems: Array<[ScreenId, string, IconType]> = [
     ["dashboard", "Início", Home],
     ["learn", "Aprender", GraduationCap],
-    ["plan", "Meu plano", Map],
+    ["plan", "Minha rotina", Map],
     ["scenarios", "Conversar", MessageCircle],
+    ["sessions", "Conversas", History],
     ["vocabulary", "Revisar", RotateCcw],
     ["progress", "Progresso", BarChart3],
   ];
@@ -1878,11 +1571,11 @@ function AppNav({
     <>
       <aside className="app-sidebar">
         <Brand onClick={() => go("dashboard")}/>
-        <nav>{navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label}</span>{id === "vocabulary" && <i>12</i>}</button>)}</nav>
+        <nav>{navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label}</span></button>)}</nav>
         <div className="sidebar-bottom"><button onClick={() => go("profile")}><Settings/><span>Configurações</span></button><div className="mini-profile"><span>{displayName.slice(0, 2).toUpperCase()}</span><div><strong>{displayName}</strong><small>Minha aprendizagem</small></div><button className="signout-button" onClick={signOut} title="Sair"><LogIn/></button></div></div>
       </aside>
       <nav className="mobile-nav">
-        {navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Meu plano" ? "Plano" : label}</span></button>)}
+        {navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Minha rotina" ? "Rotina" : label}</span></button>)}
         <button className={current === "profile" ? "active" : ""} onClick={() => go("profile")}><Settings/><span>Ajustes</span></button>
         <button onClick={signOut} title="Sair"><LogIn/><span>Sair</span></button>
       </nav>
@@ -1902,7 +1595,7 @@ function PrototypeNavigator({
   return (
     <>
       <button className="prototype-trigger" onClick={() => setOpen(!open)}>
-        <Map size={17}/><span>Mapa de telas</span><strong>{currentIndex + 1}/16</strong>
+        <Map size={17}/><span>Mapa de telas</span><strong>{currentIndex + 1}/{screens.length}</strong>
       </button>
       {open && (
         <div className="prototype-panel">
@@ -1922,7 +1615,12 @@ export default function ProductPrototype() {
   const [displayName, setDisplayName] = useState("Aluno");
   const [preferences, setPreferences] = useState<LearnerPreferences | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
-  const [selectedScenario, setSelectedScenario] = useState<Scenario>(scenarioData[0]);
+  const [scenarios, setScenarios] = useState<ScenarioCatalogItem[]>([]);
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
+  const [completedConversation, setCompletedConversation] =
+    useState<CompletedConversationView | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
 
@@ -1952,11 +1650,11 @@ export default function ProductPrototype() {
       const isEmailConfirmation = window.location.hash.includes("type=signup") || window.location.search.includes("type=signup");
       const isPasswordReset = isPasswordRecoveryCallback(window.location.hash, window.location.search);
       let currentOnboardingCompleted = false;
-      const storedScenarioId = currentSession
-        ? window.sessionStorage.getItem(scenarioStorageKey(currentSession.user.id))
-        : null;
-      const storedScenario = scenarioData.find(({ id }) => id === storedScenarioId);
-      if (storedScenario) setSelectedScenario(storedScenario);
+      if (currentSession) {
+        setSelectedScenarioId(
+          window.sessionStorage.getItem(scenarioStorageKey(currentSession.user.id)),
+        );
+      }
       setPendingEmail(storedPendingEmail);
       if (currentSession) {
         setDisplayName(currentSession.user.user_metadata.display_name || currentSession.user.email?.split("@")[0] || "Aluno");
@@ -2048,6 +1746,30 @@ export default function ProductPrototype() {
     };
   }, []);
 
+  // O catálogo de cenários vem do banco, então adicionar ou despublicar um
+  // cenário não exige republicar o frontend.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return;
+    let active = true;
+    const load = async () => {
+      setCatalogError("");
+      try {
+        const catalog = await loadScenarioCatalog(supabase);
+        if (!active) return;
+        if (!catalog.length) {
+          setCatalogError("Nenhum cenário publicado no momento.");
+          return;
+        }
+        setScenarios(catalog);
+      } catch {
+        if (active) setCatalogError("Não foi possível carregar os cenários de conversa.");
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [catalogVersion, session]);
+
   useEffect(() => {
     if (authLoading) return;
     const restoreNavigation = () => {
@@ -2076,10 +1798,15 @@ export default function ProductPrototype() {
     navigate(destination);
   };
 
-  const selectScenario = (scenario: Scenario) => {
-    setSelectedScenario(scenario);
+  const selectScenario = (scenario: ScenarioCatalogItem) => {
+    setSelectedScenarioId(scenario.id);
     if (session) window.sessionStorage.setItem(scenarioStorageKey(session.user.id), scenario.id);
     navigate("conversation");
+  };
+
+  const conversationCompleted = (completed: CompletedConversationView) => {
+    setCompletedConversation(completed);
+    navigate("summary", true);
   };
 
   const submitAuth = async (mode: AuthMode, form: AuthFormData): Promise<AuthFeedback> => {
@@ -2272,13 +1999,21 @@ export default function ProductPrototype() {
 
   const accountDeleted = async () => {
     if (session?.user.id) {
+      // O onboarding e o cenário selecionado são gravados em sessionStorage;
+      // limpar localStorage não removia nada.
       const onboardingKeys = onboardingStorageKeys(session.user.id);
-      localStorage.removeItem(onboardingKeys.draft);
-      localStorage.removeItem(onboardingKeys.step);
-      localStorage.removeItem(scenarioStorageKey(session.user.id));
+      window.sessionStorage.removeItem(onboardingKeys.draft);
+      window.sessionStorage.removeItem(onboardingKeys.step);
+      window.sessionStorage.removeItem(scenarioStorageKey(session.user.id));
+      window.sessionStorage.removeItem("lume:pending-email");
     }
+    setCompletedConversation(null);
     await signOut();
   };
+
+  const selectedScenario =
+    scenarios.find(({ id }) => id === selectedScenarioId)
+    || recommendScenario(scenarios, preferences?.currentLevel || "unknown");
 
   const content = (() => {
     if (authLoading) {
@@ -2292,12 +2027,16 @@ export default function ProductPrototype() {
       case "recover": return <AuthScreen mode={passwordRecovery ? "update" : "recover"} go={go} submit={submitAuth}/>;
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
-      case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} startScenario={selectScenario}/>;
+      case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
       case "learn": return <LearningCenter key="learn" displayName={displayName} preferences={preferences} session={session}/>;
-      case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
-      case "scenarios": return <Scenarios displayName={displayName} preferences={preferences} selectScenario={selectScenario}/>;
-      case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences} session={session}/>;
-      case "summary": return <Summary go={go}/>;
+      case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
+      case "scenarios": return <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
+      case "conversation":
+        return selectedScenario
+          ? <Conversation key={selectedScenario.id} scenario={selectedScenario} preferences={preferences} session={session} goBack={() => go("scenarios")} onCompleted={conversationCompleted}/>
+          : <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
+      case "summary": return <ConversationSummary completed={completedConversation} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
+      case "sessions": return <SessionHistory displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} go={go} resumeScenario={selectScenario}/>;
       case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review"/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;

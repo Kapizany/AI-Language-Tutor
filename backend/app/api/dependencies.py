@@ -4,6 +4,7 @@ from fastapi import Depends, Request
 
 from app.services.account import AccountService
 from app.services.budget import BudgetService
+from app.services.conversation import ConversationService
 from app.services.gateway import LLMGateway
 
 
@@ -19,6 +20,11 @@ async def get_account_service(request: Request) -> AccountService:
     return cast(AccountService, request.app.state.account_service)
 
 
+async def get_conversation_service(request: Request) -> ConversationService:
+    return cast(ConversationService, request.app.state.conversation_service)
+
+
 GatewayDependency = Annotated[LLMGateway, Depends(get_gateway)]
 BudgetDependency = Annotated[BudgetService, Depends(get_budget_service)]
 AccountDependency = Annotated[AccountService, Depends(get_account_service)]
+ConversationDependency = Annotated[ConversationService, Depends(get_conversation_service)]

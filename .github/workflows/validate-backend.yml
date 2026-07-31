@@ -57,6 +57,17 @@ jobs:
         working-directory: backend
         run: uv run pytest
 
+      - name: Audit production dependencies
+        working-directory: backend
+        run: |
+          uv export --quiet --frozen --no-dev --no-emit-project \
+            --format requirements-txt --output-file /tmp/backend-requirements.txt
+          uvx pip-audit --requirement /tmp/backend-requirements.txt \
+            --no-deps --disable-pip
+
+      - name: Test database migrations and RLS
+        run: ./scripts/test-database.sh
+
       - name: Build container
         working-directory: backend
         run: docker build --tag lume-tutor-api:${{ github.sha }} .

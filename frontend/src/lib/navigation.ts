@@ -5,6 +5,7 @@ const privateScreens = new Set([
   "scenarios",
   "conversation",
   "summary",
+  "sessions",
   "vocabulary",
   "assessment",
   "progress",

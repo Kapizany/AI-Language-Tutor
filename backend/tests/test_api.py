@@ -13,6 +13,7 @@ from app.services.account import AccountService
 from app.services.budget import BudgetService
 from app.services.gateway import LLMGateway
 from app.services.providers.mock import MockProvider
+from tests.test_gateway import build_gateway
 
 
 async def authenticated_user() -> AuthenticatedUser:
@@ -23,12 +24,7 @@ async def authenticated_user() -> AuthenticatedUser:
 
 
 def build_test_gateway() -> LLMGateway:
-    return LLMGateway(
-        [MockProvider()],
-        max_retries=0,
-        failure_threshold=3,
-        recovery_seconds=30,
-    )
+    return build_gateway([MockProvider()])
 
 
 @pytest.mark.asyncio

@@ -91,6 +91,21 @@ begin
 end;
 $$;
 
+do $$
+begin
+  begin
+    update public.profiles
+    set voice_processing_policy_version = 'forged'
+    where id = '10000000-0000-0000-0000-000000000001';
+    raise exception 'Authorization failure: direct profile update was allowed';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$$;
+
+select public.record_voice_processing_consent('2026-07-31-voice-v1');
+
 select public.save_learner_settings(
   'Updated A',
   'fr',
@@ -173,6 +188,22 @@ begin
     where id = '10000000-0000-0000-0000-000000000001'
   ) then
     raise exception 'Settings failure: onboarding was not completed';
+  end if;
+
+  if (
+    select voice_processing_policy_version
+    from public.profiles
+    where id = '10000000-0000-0000-0000-000000000001'
+  ) <> '2026-07-31-voice-v1' then
+    raise exception 'Voice consent failure: consent was not persisted';
+  end if;
+
+  if (
+    select voice_processing_policy_version
+    from public.profiles
+    where id = '10000000-0000-0000-0000-000000000002'
+  ) is not null then
+    raise exception 'Voice consent failure: another profile was modified';
   end if;
 end;
 $$;

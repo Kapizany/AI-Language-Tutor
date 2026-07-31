@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   Languages,
+  LoaderCircle,
   Mic2,
   RotateCcw,
   Sparkles,
@@ -120,26 +121,21 @@ export function Conversation({
 
   const acceptVoiceConsent = async () => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase || !session?.user.id) {
+    if (!supabase) {
       setSpeechError("Não foi possível registrar sua autorização agora.");
       return;
     }
     setSavingVoiceConsent(true);
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({
-        voice_processing_consent_at: new Date().toISOString(),
-        voice_processing_policy_version: VOICE_POLICY_VERSION,
-      })
-      .eq("id", session.user.id)
-      .select("voice_processing_policy_version")
-      .maybeSingle();
+    const { error } = await supabase.rpc("record_voice_processing_consent", {
+      p_policy_version: VOICE_POLICY_VERSION,
+    });
     setSavingVoiceConsent(false);
-    if (error || data?.voice_processing_policy_version !== VOICE_POLICY_VERSION) {
-      const migrationMissing = error?.code === "PGRST204" || error?.code === "42703";
+    if (error) {
+      const migrationMissing =
+        error.code === "PGRST202" || error.code === "42883" || error.code === "42501";
       setSpeechError(
         migrationMissing
-          ? "A atualização de voz ainda não foi aplicada ao banco de dados."
+          ? "A correção de autorização de voz ainda não foi aplicada ao banco de dados."
           : "Não foi possível registrar sua autorização. Atualize a página e tente novamente.",
       );
       return;
@@ -433,10 +429,32 @@ export function Conversation({
 
   if (!conversation) {
     return (
-      <div className="conversation-screen">
-        <main className="conversation-body conversation-empty">
-          <Sparkles />
-          <p>Abrindo sua conversa...</p>
+      <div className="conversation-screen conversation-loading-screen">
+        <header className="conversation-header">
+          <button onClick={goBack} aria-label="Voltar para os cenários">
+            <ArrowLeft />
+          </button>
+          <div className="conversation-title">
+            <span className="mini-avatar">Lu</span>
+            <div>
+              <strong>{scenario.title}</strong>
+              <small>Preparando a prática</small>
+            </div>
+          </div>
+        </header>
+        <main className="conversation-body conversation-empty" aria-busy="true">
+          <div className="conversation-loading" role="status" aria-live="polite">
+            <span className="conversation-loading-icon">
+              <LoaderCircle aria-hidden="true" />
+            </span>
+            <strong>Abrindo sua conversa...</strong>
+            <p>Estamos preparando o cenário e recuperando seu histórico.</p>
+            <div className="conversation-loading-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </div>
+          </div>
         </main>
       </div>
     );

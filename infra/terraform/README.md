@@ -14,7 +14,8 @@ at application runtime and their API keys must be stored as deployment secrets.
 ## Prerequisites
 
 - Terraform 1.10 or newer;
-- a Cloudflare account and API token with Pages edit permission;
+- a Cloudflare account and API token with Account > Cloudflare Pages > Edit;
+- Zone > DNS > Edit for `caps-labs.com` when attaching the custom hostname;
 - optionally, a Supabase organization and personal access token.
 - optionally, an existing Google Cloud project with billing enabled and
   Application Default Credentials.
@@ -63,7 +64,9 @@ to an encrypted remote backend with locking.
 
 - Cloudflare Pages starts on the free plan.
 - Supabase is disabled by default and should start on its free plan.
-- No R2 bucket, paid Worker, custom domain, or preview database branch is created.
+- No R2 bucket, paid Worker, or preview database branch is created. The optional
+  Pages custom domain uses the existing Cloudflare-managed zone and does not
+  add a separate paid service.
 - Use separate Terraform state for staging and production when those environments
   are actually needed.
 
@@ -73,7 +76,8 @@ eventually use deletion protection and backups before Terraform manages them.
 ## Deployment ownership
 
 Terraform owns the Cloudflare Pages and Supabase project resources and their
-platform settings. Application releases are intentionally handled separately:
+platform settings, including the Pages custom domain and Supabase Auth URLs.
+Application releases are intentionally handled separately:
 
 - the Supabase GitHub integration applies new files from
   `supabase/migrations/` when they reach `main`;

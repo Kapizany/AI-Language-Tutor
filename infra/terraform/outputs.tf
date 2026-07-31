@@ -8,6 +8,11 @@ output "cloudflare_pages_subdomain" {
   value       = try(cloudflare_pages_project.web[0].subdomain, null)
 }
 
+output "cloudflare_pages_custom_domain" {
+  description = "Custom hostname attached to the Cloudflare Pages project."
+  value       = try(cloudflare_pages_domain.web[0].name, null)
+}
+
 output "supabase_project_ref" {
   description = "Supabase project reference."
   value       = try(supabase_project.backend[0].id, null)

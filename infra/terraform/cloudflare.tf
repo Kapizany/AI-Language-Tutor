@@ -19,3 +19,11 @@ resource "cloudflare_pages_project" "web" {
     }
   }
 }
+
+resource "cloudflare_pages_domain" "web" {
+  count = var.enable_cloudflare_pages && var.cloudflare_pages_custom_domain != null ? 1 : 0
+
+  account_id   = var.cloudflare_account_id
+  project_name = cloudflare_pages_project.web[0].name
+  name         = var.cloudflare_pages_custom_domain
+}

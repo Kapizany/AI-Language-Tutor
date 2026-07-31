@@ -39,6 +39,13 @@ variable "production_branch" {
   default     = "main"
 }
 
+variable "cloudflare_pages_custom_domain" {
+  description = "Optional custom hostname attached to the Cloudflare Pages project."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "enable_supabase" {
   description = "Create and configure a Supabase project."
   type        = bool
@@ -120,7 +127,7 @@ variable "backend_supabase_url" {
 variable "backend_allowed_origins" {
   description = "Browser origins allowed to call the FastAPI backend."
   type        = list(string)
-  default     = ["https://tutor.caps-labs.com"]
+  default     = ["https://ai-language-tutor.caps-labs.com"]
 }
 
 variable "cloud_run_min_instances" {

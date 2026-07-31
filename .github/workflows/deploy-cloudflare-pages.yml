@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: development
-      url: ${{ steps.deploy.outputs.deployment-url }}
+      url: https://ai-language-tutor.caps-labs.com
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}

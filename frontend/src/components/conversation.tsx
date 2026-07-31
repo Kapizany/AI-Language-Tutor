@@ -48,6 +48,38 @@ const severityLabels: Record<string, string> = {
   blocking: "Precisa reformular",
 };
 
+type SpeechRecognitionResultEvent = {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+
+type SpeechRecognitionErrorEvent = {
+  error: string;
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => BrowserSpeechRecognition;
+  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+};
+
+const speechLocales: Record<string, string> = {
+  en: "en-US",
+  es: "es-ES",
+  fr: "fr-FR",
+  it: "it-IT",
+};
+
 export function Conversation({
   scenario,
   preferences,
@@ -76,8 +108,21 @@ export function Conversation({
   const [retryText, setRetryText] = useState("");
   const [ending, setEnding] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const speechWindow = typeof window === "undefined"
+    ? null
+    : window as SpeechRecognitionWindow;
+  const speechSupported = Boolean(
+    speechWindow?.SpeechRecognition || speechWindow?.webkitSpeechRecognition,
+  );
+  const [listening, setListening] = useState(false);
+  const [speechError, setSpeechError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return () => recognitionRef.current?.abort();
+  }, []);
 
   // `start_conversation_session` retoma uma sessão ativa do mesmo cenário e
   // idioma, então abrir a tela de novo continua a conversa em vez de gastar
@@ -218,6 +263,60 @@ export function Conversation({
   };
 
   const cancelGeneration = () => abortRef.current?.abort();
+
+  const toggleDictation = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const speechWindow = window as SpeechRecognitionWindow;
+    const SpeechRecognition =
+      speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechError("O reconhecimento de voz não é compatível com este navegador.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    const existingAnswer = answer.trim();
+    const prefix = existingAnswer ? `${existingAnswer} ` : "";
+    recognition.lang = speechLocales[targetLanguage] || "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        transcript += event.results[index][0]?.transcript || "";
+      }
+      setAnswer(`${prefix}${transcript}`.trimStart());
+    };
+    recognition.onerror = (event) => {
+      const messages: Record<string, string> = {
+        "not-allowed": "Permita o acesso ao microfone nas configurações do navegador.",
+        "service-not-allowed": "O serviço de reconhecimento de voz foi bloqueado pelo navegador.",
+        "audio-capture": "Nenhum microfone foi encontrado neste dispositivo.",
+        "no-speech": "Nenhuma fala foi detectada. Toque no microfone e tente novamente.",
+        network: "Não foi possível acessar o serviço de reconhecimento de voz.",
+      };
+      setSpeechError(messages[event.error] || "Não foi possível reconhecer sua fala.");
+      setListening(false);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    setSpeechError("");
+    setListening(true);
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+      setSpeechError("Não foi possível iniciar o microfone. Tente novamente.");
+    }
+  };
 
   const endSession = async () => {
     if (!conversation || !accessToken || ending) return;
@@ -408,9 +507,15 @@ export function Conversation({
               </div>
               <div className="compose-box">
                 <button
-                  className="mic-button"
-                  disabled
-                  title="Entrada por voz ainda não disponível"
+                  className={`mic-button${listening ? " listening" : ""}`}
+                  type="button"
+                  disabled={!speechSupported || sending || ending}
+                  title={speechSupported
+                    ? listening ? "Parar ditado" : "Escrever por voz"
+                    : "Reconhecimento de voz não compatível com este navegador"}
+                  aria-label={listening ? "Parar escrita por voz" : "Iniciar escrita por voz"}
+                  aria-pressed={listening}
+                  onClick={toggleDictation}
                 >
                   <Mic2 />
                 </button>
@@ -437,6 +542,8 @@ export function Conversation({
                   <ArrowRight />
                 </button>
               </div>
+              {speechError && <small className="voice-status voice-error" role="alert">{speechError}</small>}
+              {listening && <small className="voice-status" role="status">Ouvindo em {speechLocales[targetLanguage]}… fale agora.</small>}
               <small>
                 Pressione Enter para enviar · Shift + Enter para nova linha ·{" "}
                 {remainingMessages} {remainingMessages === 1 ? "mensagem" : "mensagens"} nesta

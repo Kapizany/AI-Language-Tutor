@@ -25,12 +25,14 @@ import {
   sendConversationMessage,
   sessionProgressPercent,
   startConversation,
+  transcribeAudio,
   type ConversationMessage,
   type ConversationSession,
   type ScenarioCatalogItem,
   type SessionSummary,
 } from "@/lib/conversation";
 import { shortLevel, tutorLevel, type LearnerPreferences } from "@/lib/learner";
+import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 export type CompletedConversationView = {
   sessionId: string;
@@ -47,38 +49,7 @@ const severityLabels: Record<string, string> = {
   important: "Vale tentar de novo",
   blocking: "Precisa reformular",
 };
-
-type SpeechRecognitionResultEvent = {
-  results: ArrayLike<ArrayLike<{ transcript: string }>>;
-};
-
-type SpeechRecognitionErrorEvent = {
-  error: string;
-};
-
-type BrowserSpeechRecognition = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-};
-
-type SpeechRecognitionWindow = Window & {
-  SpeechRecognition?: new () => BrowserSpeechRecognition;
-  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
-};
-
-const speechLocales: Record<string, string> = {
-  en: "en-US",
-  es: "es-ES",
-  fr: "fr-FR",
-  it: "it-IT",
-};
+const VOICE_POLICY_VERSION = "2026-07-31-voice-v1";
 
 export function Conversation({
   scenario,
@@ -108,21 +79,64 @@ export function Conversation({
   const [retryText, setRetryText] = useState("");
   const [ending, setEnding] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const speechWindow = typeof window === "undefined"
-    ? null
-    : window as SpeechRecognitionWindow;
-  const speechSupported = Boolean(
-    speechWindow?.SpeechRecognition || speechWindow?.webkitSpeechRecognition,
-  );
   const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [speechError, setSpeechError] = useState("");
+  const [voiceConsent, setVoiceConsent] = useState(false);
+  const [showVoiceConsent, setShowVoiceConsent] = useState(false);
+  const [savingVoiceConsent, setSavingVoiceConsent] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingTimerRef = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    return () => recognitionRef.current?.abort();
+    return () => {
+      if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
   }, []);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session?.user.id) return;
+    let active = true;
+    void supabase
+      .from("profiles")
+      .select("voice_processing_policy_version")
+      .eq("id", session.user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) {
+          setVoiceConsent(data?.voice_processing_policy_version === VOICE_POLICY_VERSION);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.user.id]);
+
+  const acceptVoiceConsent = async () => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setSpeechError("Não foi possível registrar sua autorização agora.");
+      return;
+    }
+    setSavingVoiceConsent(true);
+    const { error } = await supabase.rpc("record_voice_processing_consent", {
+      p_policy_version: VOICE_POLICY_VERSION,
+    });
+    setSavingVoiceConsent(false);
+    if (error) {
+      setSpeechError("Não foi possível registrar sua autorização agora.");
+      return;
+    }
+    setVoiceConsent(true);
+    setShowVoiceConsent(false);
+    setSpeechError("");
+  };
 
   // `start_conversation_session` retoma uma sessão ativa do mesmo cenário e
   // idioma, então abrir a tela de novo continua a conversa em vez de gastar
@@ -264,57 +278,89 @@ export function Conversation({
 
   const cancelGeneration = () => abortRef.current?.abort();
 
-  const toggleDictation = () => {
+  const toggleDictation = async () => {
     if (listening) {
-      recognitionRef.current?.stop();
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!voiceConsent) {
+      setShowVoiceConsent(true);
+      setSpeechError("");
       return;
     }
 
-    const speechWindow = window as SpeechRecognitionWindow;
-    const SpeechRecognition =
-      speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setSpeechError("O reconhecimento de voz não é compatível com este navegador.");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setSpeechError("Este navegador não permite acessar o microfone nesta página.");
       return;
     }
 
-    const recognition = new SpeechRecognition();
-    const existingAnswer = answer.trim();
-    const prefix = existingAnswer ? `${existingAnswer} ` : "";
-    recognition.lang = speechLocales[targetLanguage] || "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let index = 0; index < event.results.length; index += 1) {
-        transcript += event.results[index][0]?.transcript || "";
-      }
-      setAnswer(`${prefix}${transcript}`.trimStart());
-    };
-    recognition.onerror = (event) => {
-      const messages: Record<string, string> = {
-        "not-allowed": "Permita o acesso ao microfone nas configurações do navegador.",
-        "service-not-allowed": "O serviço de reconhecimento de voz foi bloqueado pelo navegador.",
-        "audio-capture": "Nenhum microfone foi encontrado neste dispositivo.",
-        "no-speech": "Nenhuma fala foi detectada. Toque no microfone e tente novamente.",
-        network: "Não foi possível acessar o serviço de reconhecimento de voz.",
-      };
-      setSpeechError(messages[event.error] || "Não foi possível reconhecer sua fala.");
-      setListening(false);
-    };
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    setSpeechError("");
-    setListening(true);
     try {
-      recognition.start();
-    } catch {
-      recognitionRef.current = null;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredMimeType = [
+        "audio/webm;codecs=opus",
+        "audio/mp4",
+        "audio/webm",
+      ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
+        : new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      const existingAnswer = answer.trim();
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onerror = () => {
+        setSpeechError("A gravação foi interrompida pelo navegador.");
+        setListening(false);
+      };
+      recorder.onstop = () => {
+        if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setListening(false);
+        const audio = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (audio.size < 100) {
+          setSpeechError("Nenhum áudio foi capturado. Toque no microfone e tente novamente.");
+          return;
+        }
+        setTranscribing(true);
+        void transcribeAudio(accessToken, audio, targetLanguage)
+          .then(({ transcript }) => {
+            if (!transcript) {
+              setSpeechError("Nenhuma fala foi identificada. Tente novamente mais perto do microfone.");
+              return;
+            }
+            setAnswer(existingAnswer ? `${existingAnswer} ${transcript}` : transcript);
+            setSpeechError("");
+          })
+          .catch((error) => {
+            setSpeechError(
+              error instanceof ConversationApiError
+                ? error.message
+                : "Não foi possível transcrever o áudio agora.",
+            );
+          })
+          .finally(() => setTranscribing(false));
+      };
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      setSpeechError("");
+      setListening(true);
+      recorder.start(250);
+      recordingTimerRef.current = window.setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 20_000);
+    } catch (error) {
+      const permissionDenied = error instanceof DOMException
+        && (error.name === "NotAllowedError" || error.name === "SecurityError");
+      setSpeechError(
+        permissionDenied
+          ? "Autorize o microfone nas configurações deste site e tente novamente."
+          : "Não foi possível acessar o microfone deste dispositivo.",
+      );
       setListening(false);
-      setSpeechError("Não foi possível iniciar o microfone. Tente novamente.");
     }
   };
 
@@ -509,13 +555,11 @@ export function Conversation({
                 <button
                   className={`mic-button${listening ? " listening" : ""}`}
                   type="button"
-                  disabled={!speechSupported || sending || ending}
-                  title={speechSupported
-                    ? listening ? "Parar ditado" : "Escrever por voz"
-                    : "Reconhecimento de voz não compatível com este navegador"}
-                  aria-label={listening ? "Parar escrita por voz" : "Iniciar escrita por voz"}
+                  disabled={sending || ending || transcribing}
+                  title={listening ? "Parar e transcrever" : "Gravar para transcrever"}
+                  aria-label={listening ? "Parar e transcrever áudio" : "Gravar áudio para transcrever"}
                   aria-pressed={listening}
-                  onClick={toggleDictation}
+                  onClick={() => void toggleDictation()}
                 >
                   <Mic2 />
                 </button>
@@ -542,8 +586,26 @@ export function Conversation({
                   <ArrowRight />
                 </button>
               </div>
+              {showVoiceConsent && (
+                <div className="voice-consent" role="dialog" aria-label="Autorização para processar áudio">
+                  <p>
+                    Para transcrever, o áudio será enviado ao Google Gemini e processado
+                    temporariamente. O Lume não salva o arquivo de áudio; a transcrição pode ser
+                    mantida na conversa.
+                  </p>
+                  <div>
+                    <Button variant="secondary" onClick={() => setShowVoiceConsent(false)}>
+                      Agora não
+                    </Button>
+                    <Button onClick={() => void acceptVoiceConsent()} disabled={savingVoiceConsent}>
+                      {savingVoiceConsent ? "Salvando..." : "Aceitar e continuar"}
+                    </Button>
+                  </div>
+                </div>
+              )}
               {speechError && <small className="voice-status voice-error" role="alert">{speechError}</small>}
-              {listening && <small className="voice-status" role="status">Ouvindo em {speechLocales[targetLanguage]}… fale agora.</small>}
+              {listening && <small className="voice-status" role="status">Gravando… toque novamente para transcrever (máximo de 20 segundos).</small>}
+              {transcribing && <small className="voice-status" role="status">Transcrevendo sua fala com segurança…</small>}
               <small>
                 Pressione Enter para enviar · Shift + Enter para nova linha ·{" "}
                 {remainingMessages} {remainingMessages === 1 ? "mensagem" : "mensagens"} nesta

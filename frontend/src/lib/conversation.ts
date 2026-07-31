@@ -62,6 +62,11 @@ export type CompletedConversation = {
   summary: SessionSummary;
 };
 
+export type SpeechTranscription = {
+  request_id: string;
+  transcript: string;
+};
+
 export type ScenarioCatalogItem = {
   id: string;
   category: "daily" | "professional" | "travel";
@@ -155,6 +160,40 @@ async function request<T>(
     );
   }
   return payload as T;
+}
+
+export async function transcribeAudio(
+  accessToken: string,
+  audio: Blob,
+  targetLanguage: TargetLanguage,
+  signal?: AbortSignal,
+): Promise<SpeechTranscription> {
+  const baseUrl = apiBaseUrl();
+  if (!baseUrl) {
+    throw new ConversationApiError("A URL do backend ainda não foi configurada.", 0);
+  }
+  const requestId = crypto.randomUUID();
+  const response = await fetch(
+    `${baseUrl}/api/v1/speech/transcribe?language=${encodeURIComponent(targetLanguage)}&request_id=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": audio.type || "audio/webm",
+      },
+      body: audio,
+      signal,
+    },
+  );
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = typeof payload?.detail === "string" ? payload.detail : null;
+    throw new ConversationApiError(
+      detail || "Não foi possível transcrever o áudio agora.",
+      response.status,
+    );
+  }
+  return payload as SpeechTranscription;
 }
 
 export function startConversation(

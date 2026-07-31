@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     llm_session_summary_temperature: float = 0.2
     # O resumo lê a conversa inteira, então custa mais que uma resposta isolada.
     llm_session_summary_max_cost_usd: float = 0.04
+    llm_speech_transcription_max_cost_usd: float = 0.01
+    speech_max_audio_bytes: int = 500_000
 
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"

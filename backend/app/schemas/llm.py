@@ -74,6 +74,12 @@ class TutorReplyResponse(BaseModel):
     usage: UsageSummary
 
 
+class SpeechTranscriptionResponse(BaseModel):
+    request_id: UUID
+    transcript: str = Field(max_length=2_000)
+    usage: UsageSummary
+
+
 class StartConversationRequest(BaseModel):
     scenario_id: str = Field(min_length=1, max_length=100)
     target_language: TargetLanguage

@@ -10,6 +10,10 @@ class BudgetExceededError(RuntimeError):
     pass
 
 
+class VoiceConsentRequiredError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class BudgetReservation:
     allowed: bool
@@ -17,6 +21,8 @@ class BudgetReservation:
 
 
 class BudgetService:
+    voice_policy_version = "2026-07-31-voice-v1"
+
     def __init__(self, settings: Settings) -> None:
         self.enabled = bool(settings.supabase_url and settings.supabase_service_role_key)
         self.max_request_cost_usd = settings.llm_max_cost_per_request_usd
@@ -63,6 +69,25 @@ class BudgetService:
         result = response.json()
         if not result.get("allowed", False):
             raise BudgetExceededError(result.get("reason", "Budget limit reached"))
+
+    async def authorize_transcription(self, *, user_id: UUID) -> None:
+        if not self.enabled:
+            return
+        response = await self.client.post(
+            "/rpc/check_speech_transcription_access",
+            json={
+                "p_user_id": str(user_id),
+                "p_policy_version": self.voice_policy_version,
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        if result.get("allowed", False):
+            return
+        reason = result.get("reason")
+        if reason == "voice_consent_required":
+            raise VoiceConsentRequiredError("Voice processing consent is required")
+        raise BudgetExceededError("Too many transcription attempts. Try again shortly.")
 
     async def finalize(
         self,

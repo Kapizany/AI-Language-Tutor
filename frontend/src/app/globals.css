@@ -105,6 +105,7 @@ h1, h2, h3, .brand { font-family: "Manrope", sans-serif; }
 @keyframes pulse{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
 @keyframes voice-pulse{0%,100%{box-shadow:0 0 0 0 rgba(240,111,84,.35)}50%{box-shadow:0 0 0 7px rgba(240,111,84,0)}}
 .voice-status{display:block!important;margin:7px 0 0!important;color:var(--teal)!important;font-size:11px!important;text-align:left!important}.voice-status.voice-error{color:var(--coral-dark)!important}
+.voice-consent{margin-top:9px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--teal-soft)}.voice-consent p{margin:0 0 10px;color:var(--ink);font-size:12px;line-height:1.5}.voice-consent>div{display:flex;justify-content:flex-end;gap:8px}
 
 @media (max-width:700px){
   .summary-stats{grid-template-columns:repeat(2,1fr);gap:14px}.session-row{grid-template-columns:44px minmax(0,1fr)}.session-row-actions{grid-column:1/-1;justify-items:stretch}.session-row-actions small{text-align:left;max-width:none}.session-summary-columns{grid-template-columns:1fr}.compose-limit{align-items:stretch;flex-direction:column}

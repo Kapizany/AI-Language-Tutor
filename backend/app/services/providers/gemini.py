@@ -32,7 +32,7 @@ class GeminiProvider(LLMProvider):
             raise RuntimeError("Gemini API key is not configured")
         response = await self.client.post(
             f"/v1beta/models/{self.model}:generateContent",
-            params={"key": self.api_key},
+            headers={"x-goog-api-key": self.api_key},
             json={
                 "system_instruction": {"parts": [{"text": request.system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": request.user_prompt}]}],

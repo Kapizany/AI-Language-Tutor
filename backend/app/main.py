@@ -6,13 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.api.routes import account, ai, conversation, health
+from app.api.routes import account, ai, conversation, health, speech
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.account import AccountService
 from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.provider_factory import build_gateway
+from app.services.transcription import TranscriptionService
 
 
 @asynccontextmanager
@@ -23,11 +24,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.budget_service = BudgetService(settings)
     app.state.account_service = AccountService(settings)
     app.state.conversation_service = ConversationService(settings)
+    app.state.transcription_service = TranscriptionService(settings)
     yield
     await app.state.gateway.close()
     await app.state.budget_service.close()
     await app.state.account_service.close()
     await app.state.conversation_service.close()
+    await app.state.transcription_service.close()
 
 
 def create_app() -> FastAPI:
@@ -66,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router)
     app.include_router(ai.router)
     app.include_router(conversation.router)
+    app.include_router(speech.router)
     return app
 
 

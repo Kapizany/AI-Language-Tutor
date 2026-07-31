@@ -19,6 +19,7 @@ Endpoints:
 
 - `GET /health`
 - `GET /api/v1/me`
+- `DELETE /api/v1/account`
 - `POST /api/v1/ai/tutor/reply`
 
 Run validation:
@@ -31,6 +32,11 @@ uv run pytest
 
 `SUPABASE_SERVICE_ROLE_KEY` is backend-only. Never expose it through a
 `NEXT_PUBLIC_*` variable or commit it.
+
+Account deletion requires an authenticated Supabase access token and the JSON
+confirmation `{"confirmation":"EXCLUIR"}`. The backend deletes the Auth user
+through the Supabase Admin API; profile, onboarding, progress, and usage rows
+are removed by the database's `ON DELETE CASCADE` relationships.
 
 ## Provider routing
 

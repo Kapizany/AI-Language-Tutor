@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import account, ai, health
 from app.core.config import get_settings
+from app.services.account import AccountService
 from app.services.budget import BudgetService
 from app.services.provider_factory import build_gateway
 
@@ -15,9 +16,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.gateway = build_gateway(settings)
     app.state.budget_service = BudgetService(settings)
+    app.state.account_service = AccountService(settings)
     yield
     await app.state.gateway.close()
     await app.state.budget_service.close()
+    await app.state.account_service.close()
 
 
 def create_app() -> FastAPI:

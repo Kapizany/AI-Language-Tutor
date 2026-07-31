@@ -1205,7 +1205,66 @@ function Profile({
   );
 }
 
-function Privacy() {
+function Privacy({
+  session,
+  accountDeleted,
+}: {
+  session: Session | null;
+  accountDeleted: () => Promise<void>;
+}) {
+  const [confirmingDeletion, setConfirmingDeletion] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deletionError, setDeletionError] = useState("");
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+
+  const deleteAccount = async () => {
+    if (confirmation !== "EXCLUIR" || deleting) return;
+    if (!apiUrl) {
+      setDeletionError("A URL do backend ainda não foi configurada.");
+      return;
+    }
+    if (!session?.access_token) {
+      setDeletionError("Sua sessão expirou. Entre novamente antes de excluir a conta.");
+      return;
+    }
+
+    setDeleting(true);
+    setDeletionError("");
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/account`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirmation: "EXCLUIR" }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(
+          typeof payload?.detail === "string"
+            ? payload.detail
+            : "Não foi possível excluir sua conta. Tente novamente.",
+        );
+      }
+      await accountDeleted();
+    } catch (requestError) {
+      setDeletionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Não foi possível excluir sua conta. Tente novamente.",
+      );
+      setDeleting(false);
+    }
+  };
+
+  const cancelDeletion = () => {
+    setConfirmingDeletion(false);
+    setConfirmation("");
+    setDeletionError("");
+  };
+
   return (
     <div className="screen-content">
       <AppHeader title="Dados e privacidade" subtitle="Você controla o que guardamos sobre sua aprendizagem."/>
@@ -1214,7 +1273,22 @@ function Privacy() {
           <div className="privacy-principle"><ShieldCheck/><div><span className="eyebrow">NOSSO PRINCÍPIO</span><h2>Seus dados existem para ajudar você — e continuam sendo seus.</h2><p>Áudios são apagados após a transcrição. Você pode baixar ou excluir seus dados a qualquer momento.</p></div></div>
           <section className="data-section"><h2>Seus dados</h2><article><span className="data-icon"><MessageCircle/></span><div><strong>Conversas e correções</strong><p>Usadas para manter seu histórico e personalizar atividades.</p><small>Nenhuma conversa persistida ainda</small></div><button disabled>Gerenciar</button></article><article><span className="data-icon"><WandSparkles/></span><div><strong>Memórias do tutor</strong><p>Objetivos, preferências e dificuldades que você autorizou.</p><small>Memória ainda não ativada</small></div><button disabled>Visualizar</button></article><article><span className="data-icon"><Mic2/></span><div><strong>Gravações de voz</strong><p>Processadas para transcrição e excluídas automaticamente.</p><small className="safe"><CheckCircle2/> Nenhum áudio armazenado</small></div></article></section>
           <section className="export-section"><div><Download/><div><h3>Baixe uma cópia dos seus dados</h3><p>A exportação será implementada junto ao backend.</p></div><Button variant="secondary" disabled>Exportação em breve</Button></div></section>
-          <section className="danger-zone"><h2>Excluir conta</h2><p>A exclusão segura será disponibilizada com o backend.</p><Button variant="danger" disabled icon={<Trash2 size={17}/>}>Exclusão em breve</Button></section>
+          <section className="danger-zone">
+            <h2>Excluir conta</h2>
+            <p>Exclui permanentemente seu acesso, perfil, preferências e histórico de aprendizagem. Esta ação não pode ser desfeita.</p>
+            {!confirmingDeletion && <Button variant="danger" onClick={() => setConfirmingDeletion(true)} icon={<Trash2 size={17}/>}>Excluir minha conta</Button>}
+            {confirmingDeletion && (
+              <div className="account-delete-confirmation">
+                <strong>Confirme a exclusão permanente</strong>
+                <label>Digite <b>EXCLUIR</b> para continuar<input autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={deleting}/></label>
+                {deletionError && <div className="form-message form-error" role="alert">{deletionError}</div>}
+                <div>
+                  <Button variant="secondary" onClick={cancelDeletion} disabled={deleting}>Cancelar</Button>
+                  <Button variant="danger" onClick={deleteAccount} disabled={confirmation !== "EXCLUIR" || deleting} icon={<Trash2 size={17}/>}>{deleting ? "Excluindo..." : "Excluir permanentemente"}</Button>
+                </div>
+              </div>
+            )}
+          </section>
         </main>
         <aside><div className="privacy-summary"><h3>Resumo de privacidade</h3><p><Check/> Áudio não armazenado</p><p><Check/> Dados protegidos por usuário</p><p><Check/> Sem venda de dados pessoais</p><button disabled>Política completa em preparação</button></div><div className="session-card"><LockKeyhole/><h3>Sessão atual</h3><p>Você está conectado neste dispositivo.</p><button disabled>Gerenciamento em breve</button></div></aside>
       </div>
@@ -1906,6 +1980,16 @@ export default function ProductPrototype() {
     go("landing");
   };
 
+  const accountDeleted = async () => {
+    if (session?.user.id) {
+      const onboardingKeys = onboardingStorageKeys(session.user.id);
+      localStorage.removeItem(onboardingKeys.draft);
+      localStorage.removeItem(onboardingKeys.step);
+      localStorage.removeItem(scenarioStorageKey(session.user.id));
+    }
+    await signOut();
+  };
+
   const content = (() => {
     if (authLoading) {
       return <div className="app-loading"><Sparkles/><span>Preparando seu espaço...</span></div>;
@@ -1928,7 +2012,7 @@ export default function ProductPrototype() {
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences}/>;
       case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;
-      case "privacy": return <Privacy/>;
+      case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
     }
   })();
 

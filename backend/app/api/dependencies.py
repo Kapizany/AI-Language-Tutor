@@ -2,6 +2,7 @@ from typing import Annotated, cast
 
 from fastapi import Depends, Request
 
+from app.services.account import AccountService
 from app.services.budget import BudgetService
 from app.services.gateway import LLMGateway
 
@@ -14,5 +15,10 @@ async def get_budget_service(request: Request) -> BudgetService:
     return cast(BudgetService, request.app.state.budget_service)
 
 
+async def get_account_service(request: Request) -> AccountService:
+    return cast(AccountService, request.app.state.account_service)
+
+
 GatewayDependency = Annotated[LLMGateway, Depends(get_gateway)]
 BudgetDependency = Annotated[BudgetService, Depends(get_budget_service)]
+AccountDependency = Annotated[AccountService, Depends(get_account_service)]

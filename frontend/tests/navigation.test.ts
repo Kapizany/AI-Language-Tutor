@@ -139,3 +139,12 @@ test("sequência permanece válida quando o usuário ainda não estudou hoje", (
   assert.equal(metrics.streak, 2);
   assert.equal(metrics.completedToday, 0);
 });
+
+test("sequência conta ontem e hoje como dois dias consecutivos", () => {
+  const metrics = calculateDashboardMetrics([
+    "2026-07-30T23:30:00-03:00",
+    "2026-07-31T08:00:00-03:00",
+  ], 5, new Date("2026-07-31T12:00:00-03:00"));
+
+  assert.equal(metrics.streak, 2);
+});

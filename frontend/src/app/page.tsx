@@ -770,7 +770,7 @@ function Dashboard({ go, displayName, preferences, session, startScenario }: { g
       setMetricsLoading(true);
       const [learningResult, conversationResult] = await Promise.all([
         supabase
-          .from("learning_activity_progress")
+          .from("learning_activity_events")
           .select("completed_at")
           .eq("user_id", session.user.id),
         supabase
@@ -1131,7 +1131,6 @@ type ProgressPeriod = 7 | 30 | 90 | 0;
 type LearningProgressRow = {
   activity_type: string;
   score: number;
-  attempts: number;
   completed_at: string;
 };
 
@@ -1151,8 +1150,8 @@ function Progress({ displayName, preferences, session }: { displayName: string; 
       setProgressError("");
       const [learningResult, tutorResult] = await Promise.all([
         supabase
-          .from("learning_activity_progress")
-          .select("activity_type,score,attempts,completed_at")
+          .from("learning_activity_events")
+          .select("activity_type,score,completed_at")
           .eq("user_id", session.user.id)
           .order("completed_at"),
         supabase
@@ -1188,8 +1187,8 @@ function Progress({ displayName, preferences, session }: { displayName: string; 
   );
   const reviewAttempts = visibleActivities
     .filter((item) => item.activity_type === "review" || item.activity_type === "flashcard")
-    .reduce((total, item) => total + item.attempts, 0);
-  const estimatedMinutes = visibleActivities.reduce((total, item) => total + item.attempts * 5, 0)
+    .length;
+  const estimatedMinutes = visibleActivities.length * 5
     + visibleInteractions.length * 2;
   const skillDefinitions = [
     ["Lições rápidas", ["quick_lesson"]],

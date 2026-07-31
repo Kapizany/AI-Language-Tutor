@@ -30,13 +30,41 @@ export type ReadingPassage = {
   questions: ReadingQuestion[];
 };
 
-export type GrammarActivity = {
+export type GrammarExample = {
+  target: string;
+  translation: string;
+};
+
+export type GrammarUseCase = {
+  title: string;
+  explanation: string;
+  examples: GrammarExample[];
+};
+
+export type GrammarMistake = {
+  incorrect: string;
+  correct: string;
+  explanation: string;
+};
+
+export type GrammarTopic = {
   id: string;
   language: LearningLanguage;
   level: LearningLevel;
   title: string;
-  explanation: string;
-  example: string;
+  overview: string;
+  formation: string;
+  useCases: GrammarUseCase[];
+  commonMistakes: GrammarMistake[];
+  notes: string[];
+};
+
+export type GrammarExercise = {
+  id: string;
+  topicId: string;
+  language: LearningLanguage;
+  level: LearningLevel;
+  title: string;
   question: string;
   options: string[];
   answer: number;
@@ -50,7 +78,8 @@ export type Flashcard = {
 export type LearningContent = {
   quickLessons: QuickLessonActivity[];
   readings: ReadingPassage[];
-  grammar: GrammarActivity[];
+  grammarTopics: GrammarTopic[];
+  grammarExercises: GrammarExercise[];
   flashcards: Flashcard[];
 };
 
@@ -58,7 +87,13 @@ export async function loadLearningContent(
   supabase: SupabaseClient,
   language: LearningLanguage,
 ): Promise<LearningContent> {
-  const [quickLessonsResult, readingsResult, grammarResult, flashcardsResult] = await Promise.all([
+  const [
+    quickLessonsResult,
+    readingsResult,
+    grammarTopicsResult,
+    grammarExercisesResult,
+    flashcardsResult,
+  ] = await Promise.all([
     supabase
       .from("quick_lessons")
       .select("id,language,level,title,body,question,options,answer_index")
@@ -72,8 +107,14 @@ export async function loadLearningContent(
       .eq("is_published", true)
       .order("sort_order"),
     supabase
-      .from("grammar_lessons")
-      .select("id,language,level,title,explanation,example,question,options,answer_index")
+      .from("grammar_topics")
+      .select("id,language,level,title,overview_pt_br,formation_pt_br,use_cases,common_mistakes,notes_pt_br")
+      .eq("language", language)
+      .eq("is_published", true)
+      .order("sort_order"),
+    supabase
+      .from("grammar_exercises")
+      .select("id,topic_id,language,level,title,question,options,answer_index")
       .eq("language", language)
       .eq("is_published", true)
       .order("sort_order"),
@@ -87,7 +128,8 @@ export async function loadLearningContent(
 
   const error = quickLessonsResult.error
     || readingsResult.error
-    || grammarResult.error
+    || grammarTopicsResult.error
+    || grammarExercisesResult.error
     || flashcardsResult.error;
   if (error) throw error;
 
@@ -120,13 +162,42 @@ export async function loadLearningContent(
         explanation: question.explanation_pt_br,
       })),
     })),
-    grammar: (grammarResult.data || []).map((row) => ({
+    grammarTopics: (grammarTopicsResult.data || []).map((row) => ({
       id: row.id,
       language: row.language as LearningLanguage,
       level: row.level as LearningLevel,
       title: row.title,
-      explanation: row.explanation,
-      example: row.example,
+      overview: row.overview_pt_br,
+      formation: row.formation_pt_br,
+      useCases: (row.use_cases as Array<{
+        title_pt_br: string;
+        explanation_pt_br: string;
+        examples: Array<{ target: string; translation_pt_br: string }>;
+      }>).map((useCase) => ({
+        title: useCase.title_pt_br,
+        explanation: useCase.explanation_pt_br,
+        examples: useCase.examples.map((example) => ({
+          target: example.target,
+          translation: example.translation_pt_br,
+        })),
+      })),
+      commonMistakes: (row.common_mistakes as Array<{
+        incorrect: string;
+        correct: string;
+        explanation_pt_br: string;
+      }>).map((mistake) => ({
+        incorrect: mistake.incorrect,
+        correct: mistake.correct,
+        explanation: mistake.explanation_pt_br,
+      })),
+      notes: row.notes_pt_br as string[],
+    })),
+    grammarExercises: (grammarExercisesResult.data || []).map((row) => ({
+      id: row.id,
+      topicId: row.topic_id,
+      language: row.language as LearningLanguage,
+      level: row.level as LearningLevel,
+      title: row.title,
       question: row.question,
       options: row.options as string[],
       answer: row.answer_index,
@@ -139,7 +210,8 @@ export async function loadLearningContent(
     (level) =>
       !content.quickLessons.some((item) => item.level === level)
       || !content.readings.some((item) => item.level === level)
-      || !content.grammar.some((item) => item.level === level),
+      || !content.grammarTopics.some((item) => item.level === level)
+      || !content.grammarExercises.some((item) => item.level === level),
   ) || content.flashcards.length === 0;
   if (incomplete) throw new Error("Learning catalog is incomplete");
 

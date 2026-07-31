@@ -1273,13 +1273,14 @@ function Privacy({
   );
 }
 
-type LearningMode = "quick_lesson" | "reading" | "grammar" | "review";
+type LearningMode = "summary" | "quick_lesson" | "reading" | "grammar" | "review";
+type GrammarView = "explanations" | "exercises";
 
 function LearningCenter({
   displayName,
   preferences,
   session,
-  initialMode = "quick_lesson",
+  initialMode = "summary",
 }: {
   displayName: string;
   preferences: LearnerPreferences | null;
@@ -1300,7 +1301,8 @@ function LearningCenter({
   const learning = learningContent || {
     quickLessons: [],
     readings: [],
-    grammar: [],
+    grammarTopics: [],
+    grammarExercises: [],
     flashcards: [],
   };
   const [mode, setMode] = useState<LearningMode>(initialMode);
@@ -1312,6 +1314,8 @@ function LearningCenter({
   const [flipped, setFlipped] = useState(false);
   const [readingQuestionIndex, setReadingQuestionIndex] = useState(0);
   const [readingCorrectAnswers, setReadingCorrectAnswers] = useState(0);
+  const [grammarView, setGrammarView] = useState<GrammarView>("explanations");
+  const [grammarExerciseIndex, setGrammarExerciseIndex] = useState(0);
 
   useEffect(() => {
     if (!catalogClient) return;
@@ -1331,17 +1335,20 @@ function LearningCenter({
 
   const quickLessonActivities = learning.quickLessons.filter((item) => item.level === level);
   const readingActivities = learning.readings.filter((item) => item.level === level);
-  const grammarActivities = learning.grammar.filter((item) => item.level === level);
+  const grammarTopics = learning.grammarTopics.filter((item) => item.level === level);
   const quickLessonActivity = mode === "quick_lesson" ? quickLessonActivities[activityIndex] : null;
   const readingActivity = mode === "reading" ? readingActivities[activityIndex] : null;
   const readingQuestion = readingActivity?.questions[readingQuestionIndex];
-  const grammarActivity = mode === "grammar" ? grammarActivities[activityIndex] : null;
-  const activity = quickLessonActivity || grammarActivity;
+  const grammarTopic = mode === "grammar" ? grammarTopics[activityIndex] : null;
+  const grammarExercises = grammarTopic
+    ? learning.grammarExercises.filter((item) => item.topicId === grammarTopic.id)
+    : [];
+  const grammarExercise = grammarExercises[grammarExerciseIndex];
   const activityCount = mode === "quick_lesson"
     ? quickLessonActivities.length
     : mode === "reading"
       ? readingActivities.length
-      : grammarActivities.length;
+      : grammarTopics.length;
 
   const recordProgress = async (activityId: string, activityType: LearningMode, score: number) => {
     if (!session) return;
@@ -1373,6 +1380,24 @@ function LearningCenter({
     setFlipped(false);
     setReadingQuestionIndex(0);
     setReadingCorrectAnswers(0);
+    setGrammarView("explanations");
+    setGrammarExerciseIndex(0);
+  };
+
+  const openCatalogItem = (
+    nextMode: Exclude<LearningMode, "summary" | "review">,
+    nextLevel: LearningLevel,
+    index: number,
+  ) => {
+    setMode(nextMode);
+    setLevel(nextLevel);
+    setActivityIndex(index);
+    setSelectedAnswer(null);
+    setSaved(false);
+    setReadingQuestionIndex(0);
+    setReadingCorrectAnswers(0);
+    setGrammarView("explanations");
+    setGrammarExerciseIndex(0);
   };
 
   const chooseLevel = (nextLevel: LearningLevel) => {
@@ -1382,6 +1407,7 @@ function LearningCenter({
     setSaved(false);
     setReadingQuestionIndex(0);
     setReadingCorrectAnswers(0);
+    setGrammarExerciseIndex(0);
   };
 
   const moveActivity = (direction: -1 | 1) => {
@@ -1393,12 +1419,48 @@ function LearningCenter({
     setSaved(false);
     setReadingQuestionIndex(0);
     setReadingCorrectAnswers(0);
+    setGrammarExerciseIndex(0);
   };
 
   const answerActivity = (index: number) => {
-    if (selectedAnswer !== null || !activity) return;
+    if (selectedAnswer !== null || !quickLessonActivity) return;
     setSelectedAnswer(index);
-    void recordProgress(activity.id, mode, index === activity.answer ? 100 : 0);
+    void recordProgress(
+      quickLessonActivity.id,
+      "quick_lesson",
+      index === quickLessonActivity.answer ? 100 : 0,
+    );
+  };
+
+  const answerGrammarExercise = (index: number) => {
+    if (selectedAnswer !== null || !grammarExercise) return;
+    setSelectedAnswer(index);
+    void recordProgress(
+      grammarExercise.id,
+      "grammar",
+      index === grammarExercise.answer ? 100 : 0,
+    );
+  };
+
+  const moveGrammarExercise = (direction: -1 | 1) => {
+    setGrammarExerciseIndex((current) =>
+      Math.max(0, Math.min(grammarExercises.length - 1, current + direction)));
+    setSelectedAnswer(null);
+    setSaved(false);
+  };
+
+  const chooseGrammarView = (view: GrammarView) => {
+    setGrammarView(view);
+    setGrammarExerciseIndex(0);
+    setSelectedAnswer(null);
+    setSaved(false);
+  };
+
+  const chooseGrammarTopic = (index: number) => {
+    setActivityIndex(index);
+    setGrammarExerciseIndex(0);
+    setSelectedAnswer(null);
+    setSaved(false);
   };
 
   const answerReading = (index: number) => {
@@ -1445,13 +1507,14 @@ function LearningCenter({
       <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName} preferences={preferences}/>
       {!reviewOnly && (
         <div className="learning-tabs" role="tablist">
+          <button className={mode === "summary" ? "active" : ""} onClick={() => chooseMode("summary")}><Map/> Sumário</button>
           <button className={mode === "quick_lesson" ? "active" : ""} onClick={() => chooseMode("quick_lesson")}><Zap/> Lição rápida</button>
           <button className={mode === "reading" ? "active" : ""} onClick={() => chooseMode("reading")}><BookOpen/> Leitura</button>
           <button className={mode === "grammar" ? "active" : ""} onClick={() => chooseMode("grammar")}><Languages/> Gramática</button>
         </div>
       )}
 
-      {mode !== "review" && (
+      {mode !== "review" && mode !== "summary" && (
         <div className="level-tabs">
           {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((item) => (
             <button key={item} className={level === item ? "active" : ""} onClick={() => chooseLevel(item)}>{item}</button>
@@ -1459,27 +1522,62 @@ function LearningCenter({
         </div>
       )}
 
-      {(mode === "quick_lesson" || mode === "grammar") && activity && (
-        <>
+      {mode === "summary" && (
+        <section className="learning-catalog">
+          <header>
+            <div><span className="eyebrow">CONTEÚDO DISPONÍVEL</span><h2>Sumário de aprendizagem</h2><p>Explore todas as atividades de {languageDetails[language].name} e continue pelo tema que preferir.</p></div>
+            <span>{learning.quickLessons.length + learning.readings.length + learning.grammarTopics.length} conteúdos</span>
+          </header>
+          <div className="catalog-sections">
+            <article>
+              <div className="catalog-section-title"><span><Zap/></span><div><h3>Lições rápidas</h3><p>Textos curtos e uma pergunta para praticar em poucos minutos.</p></div><strong>{learning.quickLessons.length}</strong></div>
+              {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
+                const items = learning.quickLessons.filter((item) => item.level === catalogLevel);
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} lições</strong><ChevronRight/></summary><div>{items.map((item, index) => <button key={item.id} onClick={() => openCatalogItem("quick_lesson", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.question}</small></div><ArrowRight/></button>)}</div></details>;
+              })}
+            </article>
+
+            <article>
+              <div className="catalog-section-title"><span><BookOpen/></span><div><h3>Leituras</h3><p>Textos progressivos com questionários de compreensão.</p></div><strong>{learning.readings.length}</strong></div>
+              {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
+                const items = learning.readings.filter((item) => item.level === catalogLevel);
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} textos</strong><ChevronRight/></summary><div>{items.map((item, index) => <button key={item.id} onClick={() => openCatalogItem("reading", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.paragraphs.length} parágrafos · {item.questions.length} perguntas</small></div><ArrowRight/></button>)}</div></details>;
+              })}
+            </article>
+
+            <article>
+              <div className="catalog-section-title"><span><Languages/></span><div><h3>Gramática</h3><p>Explicações completas e exercícios organizados por tema.</p></div><strong>{learning.grammarTopics.length}</strong></div>
+              {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
+                const items = learning.grammarTopics.filter((item) => item.level === catalogLevel);
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} temas</strong><ChevronRight/></summary><div>{items.map((item, index) => {
+                  const exerciseCount = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id).length;
+                  return <button key={item.id} onClick={() => openCatalogItem("grammar", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.useCases.length} casos de uso · {exerciseCount} exercícios</small></div><ArrowRight/></button>;
+                })}</div></details>;
+              })}
+            </article>
+          </div>
+        </section>
+      )}
+
+      {mode === "quick_lesson" && quickLessonActivity && (
           <article className="learning-activity">
             <div className="learning-activity-heading"><span className="level-chip">{level} · {languageDetails[language].name}</span><strong>{activityIndex + 1} de {activityCount}</strong></div>
-            <h2>{activity.title}</h2>
-            {grammarActivity && <div className="grammar-note"><strong>Como funciona</strong><p>{grammarActivity.explanation}</p><span>{grammarActivity.example}</span></div>}
-            {quickLessonActivity && <p className="reading-text">{quickLessonActivity.text}</p>}
+            <h2>{quickLessonActivity.title}</h2>
+            <p className="reading-text">{quickLessonActivity.text}</p>
             <section className="learning-question">
-              <strong>{activity.question}</strong>
+              <strong>{quickLessonActivity.question}</strong>
               <div>
-                {activity.options.map((option, index) => {
+                {quickLessonActivity.options.map((option, index) => {
                   const answered = selectedAnswer !== null;
                   const className = answered
-                    ? index === activity.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
+                    ? index === quickLessonActivity.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
                     : "";
-                  return <button key={option} className={className} onClick={() => answerActivity(index)} disabled={answered}>{option}{answered && index === activity.answer && <Check/>}</button>;
+                  return <button key={option} className={className} onClick={() => answerActivity(index)} disabled={answered}>{option}{answered && index === quickLessonActivity.answer && <Check/>}</button>;
                 })}
               </div>
               {selectedAnswer !== null && (
-                <p className={selectedAnswer === activity.answer ? "answer-success" : "answer-error"}>
-                  {selectedAnswer === activity.answer ? "Muito bem! Resposta correta." : "Quase! Observe a resposta destacada e tente novamente depois."}
+                <p className={selectedAnswer === quickLessonActivity.answer ? "answer-success" : "answer-error"}>
+                  {selectedAnswer === quickLessonActivity.answer ? "Muito bem! Resposta correta." : "Quase! Observe a resposta destacada e tente novamente depois."}
                   {saved && " Progresso salvo."}
                 </p>
               )}
@@ -1489,7 +1587,74 @@ function LearningCenter({
               <Button disabled={activityIndex === activityCount - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próxima</Button>
             </div>
           </article>
-        </>
+      )}
+
+      {mode === "grammar" && grammarTopic && (
+        <section className="grammar-module">
+          <div className="grammar-subtabs" role="tablist">
+            <button className={grammarView === "explanations" ? "active" : ""} onClick={() => chooseGrammarView("explanations")}><BookOpen/> Explicações</button>
+            <button className={grammarView === "exercises" ? "active" : ""} onClick={() => chooseGrammarView("exercises")}><CheckCircle2/> Exercícios</button>
+          </div>
+          <label className="grammar-topic-picker">
+            <span>Tema gramatical</span>
+            <select value={activityIndex} onChange={(event) => chooseGrammarTopic(Number(event.target.value))}>
+              {grammarTopics.map((topic, index) => <option key={topic.id} value={index}>{topic.title}</option>)}
+            </select>
+          </label>
+
+          {grammarView === "explanations" && (
+            <article className="grammar-guide">
+              <header>
+                <div><span className="level-chip">{level} · {languageDetails[language].name}</span><h2>{grammarTopic.title}</h2></div>
+                <strong>Tema {activityIndex + 1} de {activityCount}</strong>
+              </header>
+              <section className="grammar-overview"><h3>Entenda o tema</h3>{grammarTopic.overview.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>
+              <section className="grammar-formation"><h3>Como formar</h3>{grammarTopic.formation.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>
+              <section className="grammar-use-cases"><h3>Casos de uso</h3>
+                <div>{grammarTopic.useCases.map((useCase, index) => (
+                  <article key={`${useCase.title}-${index}`}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <div><h4>{useCase.title}</h4><p>{useCase.explanation}</p>
+                      <ul>{useCase.examples.map((example, exampleIndex) => <li key={`${example.target}-${exampleIndex}`}><strong>{example.target}</strong><small>{example.translation}</small></li>)}</ul>
+                    </div>
+                  </article>
+                ))}</div>
+              </section>
+              <section className="grammar-mistakes"><h3>Erros comuns</h3>
+                <div>{grammarTopic.commonMistakes.map((mistake, index) => <article key={index}><del>{mistake.incorrect}</del><ArrowRight/><ins>{mistake.correct}</ins><p>{mistake.explanation}</p></article>)}</div>
+              </section>
+              <section className="grammar-notes"><h3>Para lembrar</h3><ul>{grammarTopic.notes.map((note) => <li key={note}>{note}</li>)}</ul></section>
+              <div className="learning-navigation">
+                <Button variant="secondary" disabled={activityIndex === 0} onClick={() => moveActivity(-1)} icon={<ArrowLeft/>}>Tema anterior</Button>
+                <Button onClick={() => chooseGrammarView("exercises")} icon={<CheckCircle2/>}>Praticar este tema</Button>
+                <Button disabled={activityIndex === activityCount - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próximo tema</Button>
+              </div>
+            </article>
+          )}
+
+          {grammarView === "exercises" && grammarExercise && (
+            <article className="learning-activity grammar-exercise">
+              <div className="learning-activity-heading"><span className="level-chip">{grammarTopic.title}</span><strong>Exercício {grammarExerciseIndex + 1} de {grammarExercises.length}</strong></div>
+              <h2>Pratique: {grammarTopic.title}</h2>
+              <section className="learning-question">
+                <strong>{grammarExercise.question}</strong>
+                <div>{grammarExercise.options.map((option, index) => {
+                  const answered = selectedAnswer !== null;
+                  const className = answered
+                    ? index === grammarExercise.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
+                    : "";
+                  return <button key={option} className={className} onClick={() => answerGrammarExercise(index)} disabled={answered}>{option}{answered && index === grammarExercise.answer && <Check/>}</button>;
+                })}</div>
+                {selectedAnswer !== null && <p className={selectedAnswer === grammarExercise.answer ? "answer-success" : "answer-error"}>{selectedAnswer === grammarExercise.answer ? "Muito bem! Resposta correta." : "Revise a regra e observe a resposta destacada."}{saved && " Progresso salvo."}</p>}
+              </section>
+              <div className="learning-navigation">
+                <Button variant="secondary" onClick={() => chooseGrammarView("explanations")} icon={<BookOpen/>}>Ver explicação</Button>
+                <Button variant="secondary" disabled={grammarExerciseIndex === 0} onClick={() => moveGrammarExercise(-1)} icon={<ArrowLeft/>}>Anterior</Button>
+                <Button disabled={grammarExerciseIndex === grammarExercises.length - 1} onClick={() => moveGrammarExercise(1)} icon={<ArrowRight/>}>Próximo exercício</Button>
+              </div>
+            </article>
+          )}
+        </section>
       )}
 
       {mode === "reading" && readingActivity && readingQuestion && (

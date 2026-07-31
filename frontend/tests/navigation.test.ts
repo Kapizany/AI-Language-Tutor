@@ -77,10 +77,17 @@ test("migration contém o catálogo completo que será carregado do Supabase", (
     new URL("../../supabase/migrations/20260731123000_seed_reading_passages.sql", import.meta.url),
     "utf8",
   );
+  const grammarTopicsMigration = readFileSync(
+    new URL("../../supabase/migrations/20260731125000_seed_grammar_topics.sql", import.meta.url),
+    "utf8",
+  );
   assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-reading-/g)?.length, 160);
   assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-grammar-/g)?.length, 200);
   assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-flashcard-/g)?.length, 200);
   assert.equal(readingMigration.match(/'(?:en|es|fr|it)-passage-/g)?.length, 160);
+  assert.equal(grammarTopicsMigration.match(/'(?:en|es|fr|it)-grammar-(?:A1|A2|B1|B2)-\d+'/g)?.length, 40);
+  assert.ok((grammarTopicsMigration.match(/"title_pt_br":/g)?.length || 0) >= 80);
+  assert.ok((grammarTopicsMigration.match(/"incorrect":/g)?.length || 0) >= 80);
 
   const firstPassage = readingMigration.indexOf("('en-passage-");
   const passageRows = readingMigration.slice(firstPassage).split(/\n(?=\('(?:en|es|fr|it)-passage-)/);

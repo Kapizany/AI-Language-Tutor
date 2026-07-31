@@ -76,7 +76,7 @@ import {
 import {
   loadLearnerLearningProgress,
   loadLearningContent,
-  loadReviewFlashcards,
+  loadReviewItems,
   type LearningContent,
   type LearningLevel,
   type LearningSection,
@@ -1108,13 +1108,14 @@ function LearningCenter({
   preferences,
   session,
   initialMode = "summary",
+  goToScenarios,
 }: {
   displayName: string;
   preferences: LearnerPreferences | null;
   session: Session | null;
   initialMode?: LearningMode;
+  goToScenarios: () => void;
 }) {
-  const reviewOnly = initialMode === "review";
   const language = preferences?.targetLanguage || "en";
   const preferredLevel = (["A1", "A2", "B1", "B2"].includes(preferences?.currentLevel || "")
     ? preferences?.currentLevel
@@ -1133,6 +1134,7 @@ function LearningCenter({
     flashcards: [],
   };
   const [mode, setMode] = useState<LearningMode>(initialMode);
+  const reviewOnly = mode === "review";
   const [level, setLevel] = useState<LearningLevel>(preferredLevel);
   const [activityIndex, setActivityIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
@@ -1158,7 +1160,7 @@ function LearningCenter({
               readings: [],
               grammarTopics: [],
               grammarExercises: [],
-              flashcards: await loadReviewFlashcards(catalogClient, language),
+              flashcards: await loadReviewItems(catalogClient, language),
             }
           : await loadLearningContent(catalogClient, language);
         const progress = session
@@ -1304,6 +1306,21 @@ function LearningCenter({
     }
   };
 
+  const recordMistake = async (
+    activityId: string,
+    activityType: "quick_lesson" | "reading" | "grammar",
+    stepIndex: number,
+    selectedIndex: number,
+  ) => {
+    if (!catalogClient) return;
+    await catalogClient.rpc("record_learning_mistake", {
+      p_activity_id: activityId,
+      p_activity_type: activityType,
+      p_step_index: stepIndex,
+      p_selected_answer_index: selectedIndex,
+    });
+  };
+
   const chooseMode = (nextMode: LearningMode) => {
     setMode(nextMode);
     setSelectedAnswer(null);
@@ -1395,6 +1412,9 @@ function LearningCenter({
       "quick_lesson",
       index === quickLessonActivity.answer ? 100 : 0,
     );
+    if (index !== quickLessonActivity.answer) {
+      void recordMistake(quickLessonActivity.id, "quick_lesson", 0, index);
+    }
   };
 
   const answerGrammarExercise = (index: number) => {
@@ -1405,6 +1425,9 @@ function LearningCenter({
       "grammar",
       index === grammarExercise.answer ? 100 : 0,
     );
+    if (index !== grammarExercise.answer) {
+      void recordMistake(grammarExercise.id, "grammar", 0, index);
+    }
   };
 
   const moveGrammarExercise = (direction: -1 | 1) => {
@@ -1463,6 +1486,9 @@ function LearningCenter({
     const correctAnswers = readingCorrectAnswers + (index === readingQuestion.answer ? 1 : 0);
     setSelectedAnswer(index);
     setReadingCorrectAnswers(correctAnswers);
+    if (index !== readingQuestion.answer) {
+      void recordMistake(readingActivity.id, "reading", readingQuestionIndex, index);
+    }
     if (readingQuestionIndex === readingActivity.questions.length - 1) {
       const score = Math.round((correctAnswers / readingActivity.questions.length) * 100);
       void recordProgress(readingActivity.id, "reading", score);
@@ -1504,12 +1530,20 @@ function LearningCenter({
     const isLast = cardIndex === learning.flashcards.length - 1;
     const flashcard = learning.flashcards[cardIndex];
     if (!flashcard) return;
-    void recordProgress(
-      flashcard.id,
-      "review",
-      remembered ? 100 : 50,
-    );
-    setCardIndex(isLast ? 0 : cardIndex + 1);
+    if (catalogClient) {
+      void catalogClient.rpc("review_learning_mistake", {
+        p_item_id: flashcard.id,
+        p_remembered: remembered,
+      });
+    }
+    if (remembered) {
+      setLearningContent((current) => current
+        ? { ...current, flashcards: current.flashcards.filter((item) => item.id !== flashcard.id) }
+        : current);
+      setCardIndex(Math.max(0, Math.min(cardIndex, learning.flashcards.length - 2)));
+    } else {
+      setCardIndex(isLast ? 0 : cardIndex + 1);
+    }
     setFlipped(false);
   };
 
@@ -1732,13 +1766,30 @@ function LearningCenter({
 
       {mode === "review" && (
         <div className="quick-lesson">
-          <div className="quick-lesson-progress"><span>50 cartões · dificuldade progressiva</span><strong>{cardIndex + 1}/{learning.flashcards.length}</strong></div>
-          <button className={`learning-flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
-            <small>{flipped ? "SIGNIFICADO" : languageDetails[language].name.toUpperCase()}</small>
-            <strong>{flipped ? learning.flashcards[cardIndex].back : learning.flashcards[cardIndex].front}</strong>
-            <span>{flipped ? "Você lembrou?" : "Toque para virar"}</span>
-          </button>
-          {flipped && <div className="quick-lesson-actions"><Button variant="secondary" onClick={() => rateCard(false)}>Revisar depois</Button><Button onClick={() => rateCard(true)}>Eu lembrei</Button></div>}
+          {learning.flashcards.length === 0 ? (
+            <div className="review-empty">
+              <CheckCircle2/>
+              <h2>Nada para revisar agora</h2>
+              <p>Os erros cometidos em lições, leituras, exercícios de gramática e conversas aparecerão aqui.</p>
+              <div className="review-empty-actions">
+                <Button onClick={() => { setLearningContent(null); chooseMode("quick_lesson"); }} icon={<Zap/>}>Fazer uma lição rápida</Button>
+                <Button variant="secondary" onClick={goToScenarios} icon={<MessageCircle/>}>Praticar conversação</Button>
+              </div>
+            </div>
+          ) : (() => {
+            const item = learning.flashcards[Math.min(cardIndex, learning.flashcards.length - 1)];
+            const sourceLabels = { quick_lesson: "Lição rápida", reading: "Leitura", grammar: "Gramática", conversation: "Conversação" };
+            return <>
+              <div className="quick-lesson-progress"><span>{sourceLabels[item.sourceType]} · {item.level}</span><strong>{Math.min(cardIndex + 1, learning.flashcards.length)}/{learning.flashcards.length}</strong></div>
+              <button className={`learning-flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
+                <small>{flipped ? "RESPOSTA CORRETA" : "SEU ERRO"}</small>
+                <strong>{flipped ? item.correctAnswer : item.learnerAnswer}</strong>
+                <p>{flipped ? item.explanation || item.prompt : item.prompt}</p>
+                <span>{flipped ? "Você consegue lembrar agora?" : "Toque para ver a correção"}</span>
+              </button>
+              {flipped && <div className="quick-lesson-actions"><Button variant="secondary" onClick={() => rateCard(false)}>Ainda preciso revisar</Button><Button onClick={() => rateCard(true)}>Agora aprendi</Button></div>}
+            </>;
+          })()}
         </div>
       )}
     </div>
@@ -2227,7 +2278,7 @@ export default function ProductPrototype() {
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
       case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
-      case "learn": return <LearningCenter key="learn" displayName={displayName} preferences={preferences} session={session}/>;
+      case "learn": return <LearningCenter key="learn" displayName={displayName} preferences={preferences} session={session} goToScenarios={() => go("scenarios")}/>;
       case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
       case "scenarios": return <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
       case "conversation":
@@ -2236,7 +2287,7 @@ export default function ProductPrototype() {
           : <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
       case "summary": return <ConversationSummary completed={completedConversation} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
       case "sessions": return <SessionHistory displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} go={go} resumeScenario={selectScenario}/>;
-      case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review"/>;
+      case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
       case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;

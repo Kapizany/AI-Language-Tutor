@@ -70,11 +70,14 @@ export type GrammarExercise = {
   answer: number;
 };
 
-export type Flashcard = {
+export type ReviewItem = {
   id: string;
   level: LearningLevel;
-  front: string;
-  back: string;
+  sourceType: "quick_lesson" | "reading" | "grammar" | "conversation";
+  prompt: string;
+  learnerAnswer: string;
+  correctAnswer: string;
+  explanation: string;
 };
 
 export type LearningContent = {
@@ -82,7 +85,7 @@ export type LearningContent = {
   readings: ReadingPassage[];
   grammarTopics: GrammarTopic[];
   grammarExercises: GrammarExercise[];
-  flashcards: Flashcard[];
+  flashcards: ReviewItem[];
 };
 
 export type LearningSection = "quick_lesson" | "reading" | "grammar";
@@ -251,7 +254,7 @@ export async function loadLearningContent(
       options: row.options as string[],
       answer: row.answer_index,
     })),
-    flashcards: flashcardsResult.data || [],
+    flashcards: [],
   };
 
   const levels: LearningLevel[] = ["A1", "A2", "B1", "B2"];
@@ -261,23 +264,30 @@ export async function loadLearningContent(
       || !content.readings.some((item) => item.level === level)
       || !content.grammarTopics.some((item) => item.level === level)
       || !content.grammarExercises.some((item) => item.level === level),
-  ) || content.flashcards.length === 0;
+  );
   if (incomplete) throw new Error("Learning catalog is incomplete");
 
   return content;
 }
 
-export async function loadReviewFlashcards(
+export async function loadReviewItems(
   supabase: SupabaseClient,
   language: LearningLanguage,
-): Promise<Flashcard[]> {
+): Promise<ReviewItem[]> {
   const { data, error } = await supabase
-    .from("review_flashcards")
-    .select("id,level,front,back")
+    .from("learner_review_items")
+    .select("id,level,source_type,prompt,learner_answer,correct_answer,explanation_pt_br")
     .eq("language", language)
-    .eq("is_published", true)
-    .order("sort_order");
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
   if (error) throw error;
-  if (!data?.length) throw new Error("Review catalog is empty");
-  return data as Flashcard[];
+  return (data || []).map((item) => ({
+    id: item.id,
+    level: item.level as LearningLevel,
+    sourceType: item.source_type as ReviewItem["sourceType"],
+    prompt: item.prompt,
+    learnerAnswer: item.learner_answer,
+    correctAnswer: item.correct_answer,
+    explanation: item.explanation_pt_br,
+  }));
 }

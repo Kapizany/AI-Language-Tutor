@@ -35,10 +35,14 @@ resource "supabase_settings" "backend" {
   })
 
   auth = jsonencode({
-    site_url                  = var.site_url
-    uri_allow_list            = join(",", var.additional_redirect_urls)
+    site_url = var.site_url
+    uri_allow_list = join(",", distinct(concat(
+      var.additional_redirect_urls,
+      ["${trimsuffix(var.site_url, "/")}/?auth=recovery"]
+    )))
     disable_signup            = false
     enable_email_signup       = true
     enable_anonymous_sign_ins = false
+    mailer_autoconfirm        = false
   })
 }

@@ -2,13 +2,13 @@ from app.core.config import Settings
 
 
 def test_recommended_provider_and_prices_are_safe_defaults() -> None:
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.llm_primary_provider == "gemini"
     assert settings.llm_fallback_providers == ["deepseek"]
-    assert settings.gemini_model == "gemini-2.5-flash-lite"
-    assert settings.gemini_input_usd_per_million == 0.10
-    assert settings.gemini_output_usd_per_million == 0.40
+    assert settings.gemini_model == "gemini-3.1-flash-lite"
+    assert settings.gemini_input_usd_per_million == 0.25
+    assert settings.gemini_output_usd_per_million == 1.50
     assert settings.deepseek_model == "deepseek-v4-flash"
     assert settings.deepseek_input_usd_per_million == 0.14
     assert settings.deepseek_output_usd_per_million == 0.28
@@ -17,6 +17,7 @@ def test_recommended_provider_and_prices_are_safe_defaults() -> None:
 
 def test_csv_settings_are_parsed() -> None:
     settings = Settings(
+        _env_file=None,
         app_allowed_origins="http://localhost:3000,https://tutor.caps-labs.com",
         llm_fallback_providers="gemini,deepseek",
     )

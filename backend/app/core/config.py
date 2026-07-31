@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     kimi_output_usd_per_million: float = 0
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-lite"
-    gemini_input_usd_per_million: float = 0.10
-    gemini_output_usd_per_million: float = 0.40
+    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_input_usd_per_million: float = 0.25
+    gemini_output_usd_per_million: float = 1.50
 
     @field_validator("app_allowed_origins", "llm_fallback_providers", mode="before")
     @classmethod

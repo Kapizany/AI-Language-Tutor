@@ -48,7 +48,19 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
-import { onboardingStorageKeys, resolveDestination, scenarioStorageKey } from "@/lib/navigation";
+import {
+  getLearningContent,
+  type LearningLevel,
+} from "@/lib/learning-content";
+import { calculateDashboardMetrics } from "@/lib/progress";
+import {
+  isEmailConfirmed,
+  isPasswordRecoveryCallback,
+  onboardingStorageKeys,
+  passwordRecoveryRedirectUrl,
+  resolveDestination,
+  scenarioStorageKey,
+} from "@/lib/navigation";
 
 type ScreenId =
   | "landing"
@@ -59,6 +71,7 @@ type ScreenId =
   | "confirm-email"
   | "onboarding"
   | "dashboard"
+  | "learn"
   | "plan"
   | "scenarios"
   | "conversation"
@@ -159,6 +172,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "confirm-email", label: "Confirmar email", icon: Mail, group: "Entrada" },
   { id: "onboarding", label: "Onboarding", icon: Target, group: "Entrada" },
   { id: "dashboard", label: "Início", icon: Home, group: "Produto" },
+  { id: "learn", label: "Aprender", icon: GraduationCap, group: "Produto" },
   { id: "plan", label: "Plano", icon: Map, group: "Produto" },
   { id: "scenarios", label: "Cenários", icon: Globe2, group: "Produto" },
   { id: "conversation", label: "Conversa", icon: Mic2, group: "Produto" },
@@ -172,6 +186,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
 
 const appScreens = new Set<ScreenId>([
   "dashboard",
+  "learn",
   "plan",
   "scenarios",
   "conversation",
@@ -700,16 +715,63 @@ function AppHeader({
   );
 }
 
-function Dashboard({ go, displayName, preferences, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; startScenario: (scenario: Scenario) => void }) {
+function Dashboard({ go, displayName, preferences, session, startScenario }: { go: (id: ScreenId) => void; displayName: string; preferences: LearnerPreferences | null; session: Session | null; startScenario: (scenario: Scenario) => void }) {
   const level = preferences ? levelLabels[preferences.currentLevel].split(" · ")[0] : "A1";
   const language = preferences ? languageDetails[preferences.targetLanguage].name : "Inglês";
+  const [metrics, setMetrics] = useState(() => calculateDashboardMetrics([], preferences?.studyDaysPerWeek || 5));
+  const [metricsLoading, setMetricsLoading] = useState(true);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) {
+      return;
+    }
+
+    let active = true;
+    const loadMetrics = async () => {
+      setMetricsLoading(true);
+      const [learningResult, conversationResult] = await Promise.all([
+        supabase
+          .from("learning_activity_progress")
+          .select("completed_at")
+          .eq("user_id", session.user.id),
+        supabase
+          .from("llm_usage_events")
+          .select("created_at")
+          .eq("user_id", session.user.id)
+          .eq("status", "succeeded"),
+      ]);
+      if (!active) return;
+      const conversationDays = new Set<string>();
+      const conversationTimestamps = (conversationResult.data || [])
+        .map(({ created_at }) => created_at)
+        .filter((timestamp) => {
+          const day = timestamp.slice(0, 10);
+          if (conversationDays.has(day)) return false;
+          conversationDays.add(day);
+          return true;
+        });
+      const timestamps = [
+        ...(learningResult.data || []).map(({ completed_at }) => completed_at),
+        ...conversationTimestamps,
+      ];
+      setMetrics(calculateDashboardMetrics(timestamps, preferences?.studyDaysPerWeek || 5));
+      setMetricsLoading(false);
+    };
+    void loadMetrics();
+    return () => { active = false; };
+  }, [preferences?.studyDaysPerWeek, session]);
+
+  const monthlyTarget = metrics.weeklyTarget * 4;
+  const monthlyPercent = Math.min(100, Math.round((metrics.activitiesThisMonth / monthlyTarget) * 100));
+  const monthName = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date());
   return (
     <div className="screen-content">
       <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences}/>
       <div className="streak-banner">
-        <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>7 dias</strong></div></div>
-        <div className="week-dots">{["S","T","Q","Q","S","S","D"].map((day, index)=><div key={`${day}-${index}`} className={index < 6 ? "done" : ""}><span>{day}</span><i>{index < 6 ? <Check size={12}/> : ""}</i></div>)}</div>
-        <p>Você estudou <strong>4 de 5 dias</strong> nesta semana.</p>
+        <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>{metricsLoading ? "…" : `${metrics.streak} ${metrics.streak === 1 ? "dia" : "dias"}`}</strong></div></div>
+        <div className="week-dots">{["S","T","Q","Q","S","S","D"].map((day, index)=><div key={`${day}-${index}`} className={metrics.activeWeekdays[index] ? "done" : ""}><span>{day}</span><i>{metrics.activeWeekdays[index] ? <Check size={12}/> : ""}</i></div>)}</div>
+        <p>{metricsLoading ? "Carregando seu progresso…" : <>Você estudou <strong>{metrics.activeDaysThisWeek} de {metrics.weeklyTarget} dias</strong> nesta semana. Hoje: <strong>{metrics.completedToday}</strong>.</>}</p>
       </div>
       <section className="dashboard-grid">
         <div className="main-column">
@@ -717,18 +779,18 @@ function Dashboard({ go, displayName, preferences, startScenario }: { go: (id: S
           <article className="next-lesson">
             <div className="lesson-visual"><div className="coffee-cup">☕</div><span>Conversação</span></div>
             <div className="lesson-copy"><span className="level-chip">{level} · COTIDIANO</span><h3>Um café, por favor</h3><p>Pratique pedidos, tamanhos e preferências em {language}.</p><div className="lesson-meta"><span><Clock3 size={16}/> {preferences?.studyMinutesPerDay || 10} min</span><span><MessageCircle size={16}/> Conversa guiada</span></div><Button onClick={() => startScenario(scenarioData[0])} icon={<Play size={17} fill="currentColor"/>}>Começar atividade</Button></div>
-            <ProgressRing value={35} label="semana"/>
+            <ProgressRing value={metrics.weeklyPercent} label="semana"/>
           </article>
           <div className="section-heading compact"><h2>Pratique do seu jeito</h2></div>
           <div className="quick-grid">
             <button onClick={() => go("scenarios")}><span className="quick-icon coral"><MessageCircle/></span><div><strong>Conversar</strong><small>Escolha um cenário</small></div><ChevronRight/></button>
-            <button onClick={() => go("vocabulary")}><span className="quick-icon teal"><BookOpen/></span><div><strong>Revisar</strong><small>12 palavras para hoje</small></div><ChevronRight/></button>
-            <button onClick={() => go("assessment")}><span className="quick-icon blue"><GraduationCap/></span><div><strong>Avaliar nível</strong><small>Teste rápido opcional</small></div><ChevronRight/></button>
+            <button onClick={() => go("learn")}><span className="quick-icon teal"><BookOpen/></span><div><strong>Aprender</strong><small>Leitura, gramática e flashcards</small></div><ChevronRight/></button>
+            <button onClick={() => go("vocabulary")}><span className="quick-icon blue"><Zap/></span><div><strong>Revisar</strong><small>12 palavras para hoje</small></div><ChevronRight/></button>
           </div>
         </div>
         <aside className="side-column">
-          <div className="goal-card"><div className="card-title"><Target/><strong>Meta mensal</strong><span>Julho</span></div><ProgressRing value={68} label="concluído"/><p><strong>8h 10min</strong> de 12 horas</p><small>Você está no ritmo certo.</small></div>
-          <div className="review-card"><div className="card-title"><Zap/><strong>Revisão inteligente</strong></div><h3>12 palavras esperam por você</h3><p>Uma revisão de 4 minutos mantém sua memória fresca.</p><Button variant="secondary" full onClick={() => go("vocabulary")}>Revisar agora</Button></div>
+          <div className="goal-card"><div className="card-title"><Target/><strong>Meta mensal</strong><span>{monthName}</span></div><ProgressRing value={monthlyPercent} label="concluído"/><p><strong>{metrics.activitiesThisMonth}</strong> de {monthlyTarget} atividades</p><small>{monthlyPercent >= 100 ? "Meta concluída!" : "Cada atividade concluída conta."}</small></div>
+          <div className="review-card"><div className="card-title"><Zap/><strong>Progresso diário</strong></div><h3>{metrics.completedToday ? `${metrics.completedToday} ${metrics.completedToday === 1 ? "atividade concluída" : "atividades concluídas"}` : "Comece sua primeira atividade"}</h3><p>Leituras, exercícios, flashcards e conversas atualizam este card automaticamente.</p><Button variant="secondary" full onClick={() => go("learn")}>{metrics.completedToday ? "Continuar estudando" : "Começar agora"}</Button></div>
         </aside>
       </section>
     </div>
@@ -1159,6 +1221,143 @@ function Privacy() {
   );
 }
 
+type LearningMode = "reading" | "grammar" | "flashcard";
+
+function LearningCenter({
+  displayName,
+  preferences,
+  session,
+}: {
+  displayName: string;
+  preferences: LearnerPreferences | null;
+  session: Session | null;
+}) {
+  const language = preferences?.targetLanguage || "en";
+  const preferredLevel = (["A1", "A2", "B1", "B2"].includes(preferences?.currentLevel || "")
+    ? preferences?.currentLevel
+    : "A1") as LearningLevel;
+  const learning = getLearningContent(language);
+  const [mode, setMode] = useState<LearningMode>("reading");
+  const [level, setLevel] = useState<LearningLevel>(preferredLevel);
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [cardIndex, setCardIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+
+  const readingActivity = learning.readings.find((item) => item.level === level)!;
+  const grammarActivity = learning.grammar.find((item) => item.level === level)!;
+  const activity = mode === "reading" ? readingActivity : grammarActivity;
+
+  const recordProgress = async (activityId: string, activityType: LearningMode, score: number) => {
+    if (!session) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const { data: previous } = await supabase
+      .from("learning_activity_progress")
+      .select("attempts")
+      .eq("user_id", session.user.id)
+      .eq("activity_id", activityId)
+      .maybeSingle();
+    const { error } = await supabase.from("learning_activity_progress").upsert({
+      user_id: session.user.id,
+      activity_id: activityId,
+      activity_type: activityType,
+      score,
+      attempts: (previous?.attempts || 0) + 1,
+      completed_at: new Date().toISOString(),
+    }, { onConflict: "user_id,activity_id" });
+    if (!error) setSaved(true);
+  };
+
+  const chooseMode = (nextMode: LearningMode) => {
+    setMode(nextMode);
+    setSelectedAnswer(null);
+    setSaved(false);
+    setCardIndex(0);
+    setFlipped(false);
+  };
+
+  const chooseLevel = (nextLevel: LearningLevel) => {
+    setLevel(nextLevel);
+    setSelectedAnswer(null);
+    setSaved(false);
+  };
+
+  const answer = (index: number) => {
+    if (selectedAnswer !== null) return;
+    setSelectedAnswer(index);
+    void recordProgress(activity.id, mode, index === activity.answer ? 100 : 0);
+  };
+
+  const rateCard = (remembered: boolean) => {
+    const isLast = cardIndex === learning.flashcards.length - 1;
+    void recordProgress(
+      `${language}-flashcard-${cardIndex + 1}`,
+      "flashcard",
+      remembered ? 100 : 50,
+    );
+    setCardIndex(isLast ? 0 : cardIndex + 1);
+    setFlipped(false);
+  };
+
+  return (
+    <div className="screen-content">
+      <AppHeader title="Aprender" subtitle="Leitura, gramática e lições rápidas no seu ritmo." displayName={displayName} preferences={preferences}/>
+      <div className="learning-tabs" role="tablist">
+        <button className={mode === "reading" ? "active" : ""} onClick={() => chooseMode("reading")}><BookOpen/> Leitura</button>
+        <button className={mode === "grammar" ? "active" : ""} onClick={() => chooseMode("grammar")}><Languages/> Gramática</button>
+        <button className={mode === "flashcard" ? "active" : ""} onClick={() => chooseMode("flashcard")}><Zap/> Lição rápida</button>
+      </div>
+
+      {mode !== "flashcard" && (
+        <>
+          <div className="level-tabs">
+            {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((item) => (
+              <button key={item} className={level === item ? "active" : ""} onClick={() => chooseLevel(item)}>{item}</button>
+            ))}
+          </div>
+          <article className="learning-activity">
+            <span className="level-chip">{level} · {languageDetails[language].name}</span>
+            <h2>{activity.title}</h2>
+            {mode === "grammar" && <div className="grammar-note"><strong>Como funciona</strong><p>{grammarActivity.explanation}</p><span>{grammarActivity.example}</span></div>}
+            {mode === "reading" && <p className="reading-text">{readingActivity.text}</p>}
+            <section className="learning-question">
+              <strong>{activity.question}</strong>
+              <div>
+                {activity.options.map((option, index) => {
+                  const answered = selectedAnswer !== null;
+                  const className = answered
+                    ? index === activity.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
+                    : "";
+                  return <button key={option} className={className} onClick={() => answer(index)} disabled={answered}>{option}{answered && index === activity.answer && <Check/>}</button>;
+                })}
+              </div>
+              {selectedAnswer !== null && (
+                <p className={selectedAnswer === activity.answer ? "answer-success" : "answer-error"}>
+                  {selectedAnswer === activity.answer ? "Muito bem! Resposta correta." : "Quase! Observe a resposta destacada e tente novamente depois."}
+                  {saved && " Progresso salvo."}
+                </p>
+              )}
+            </section>
+          </article>
+        </>
+      )}
+
+      {mode === "flashcard" && (
+        <div className="quick-lesson">
+          <div className="quick-lesson-progress"><span>Lição de 3 minutos</span><strong>{cardIndex + 1}/{learning.flashcards.length}</strong></div>
+          <button className={`learning-flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
+            <small>{flipped ? "SIGNIFICADO" : languageDetails[language].name.toUpperCase()}</small>
+            <strong>{flipped ? learning.flashcards[cardIndex].back : learning.flashcards[cardIndex].front}</strong>
+            <span>{flipped ? "Você lembrou?" : "Toque para virar"}</span>
+          </button>
+          {flipped && <div className="quick-lesson-actions"><Button variant="secondary" onClick={() => rateCard(false)}>Revisar depois</Button><Button onClick={() => rateCard(true)}>Eu lembrei</Button></div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppNav({
   current,
   go,
@@ -1172,6 +1371,7 @@ function AppNav({
 }) {
   const navItems: Array<[ScreenId, string, IconType]> = [
     ["dashboard", "Início", Home],
+    ["learn", "Aprender", GraduationCap],
     ["plan", "Meu plano", Map],
     ["scenarios", "Conversar", MessageCircle],
     ["vocabulary", "Revisar", BookOpen],
@@ -1237,15 +1437,23 @@ export default function ProductPrototype() {
     }
 
     let active = true;
+    let suppressSignedOutRedirect = false;
     const initialize = async () => {
       const { data } = await supabase.auth.getSession();
       if (!active) return;
 
-      const currentSession = data.session;
+      let currentSession = data.session;
+      if (currentSession && !isEmailConfirmed(currentSession.user)) {
+        const unconfirmedEmail = currentSession.user.email?.trim().toLowerCase() || "";
+        if (unconfirmedEmail) window.sessionStorage.setItem("lume:pending-email", unconfirmedEmail);
+        suppressSignedOutRedirect = true;
+        await supabase.auth.signOut({ scope: "local" });
+        currentSession = null;
+      }
       setSession(currentSession);
       const storedPendingEmail = window.sessionStorage.getItem("lume:pending-email") || "";
       const isEmailConfirmation = window.location.hash.includes("type=signup") || window.location.search.includes("type=signup");
-      const isPasswordReset = window.location.hash.includes("type=recovery") || window.location.search.includes("type=recovery");
+      const isPasswordReset = isPasswordRecoveryCallback(window.location.hash, window.location.search);
       let currentOnboardingCompleted = false;
       const storedScenarioId = currentSession
         ? window.sessionStorage.getItem(scenarioStorageKey(currentSession.user.id))
@@ -1293,8 +1501,12 @@ export default function ProductPrototype() {
 
     void initialize();
     const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      setSession(nextSession);
       if (event === "SIGNED_OUT") {
+        setSession(null);
+        if (suppressSignedOutRedirect) {
+          suppressSignedOutRedirect = false;
+          return;
+        }
         setPreferences(null);
         setOnboardingCompleted(false);
         setDisplayName("Aluno");
@@ -1302,6 +1514,20 @@ export default function ProductPrototype() {
         window.history.replaceState(null, "", "#/login");
         return;
       }
+      if (nextSession && !isEmailConfirmed(nextSession.user)) {
+        const unconfirmedEmail = nextSession.user.email?.trim().toLowerCase() || "";
+        if (unconfirmedEmail) {
+          window.sessionStorage.setItem("lume:pending-email", unconfirmedEmail);
+          setPendingEmail(unconfirmedEmail);
+        }
+        setSession(null);
+        setScreen("confirm-email");
+        window.history.replaceState(null, "", "#/confirm-email");
+        suppressSignedOutRedirect = true;
+        window.setTimeout(() => void supabase.auth.signOut({ scope: "local" }), 0);
+        return;
+      }
+      setSession(nextSession);
       if (nextSession) {
         setDisplayName(nextSession.user.user_metadata.display_name || nextSession.user.email?.split("@")[0] || "Aluno");
       }
@@ -1369,13 +1595,14 @@ export default function ProductPrototype() {
       const { error } = await supabase.auth.updateUser({ password: form.password });
       if (error) return { error: error.message };
       setPasswordRecovery(false);
+      window.history.replaceState(null, "", window.location.pathname);
       navigate(onboardingCompleted ? "dashboard" : "onboarding");
-      return {};
+      return { success: "Senha atualizada com sucesso." };
     }
 
     if (mode === "recover") {
       const { error } = await supabase.auth.resetPasswordForEmail(form.email, {
-        redirectTo: window.location.origin,
+        redirectTo: passwordRecoveryRedirectUrl(window.location.origin),
       });
       return error
         ? { error: error.message }
@@ -1396,10 +1623,13 @@ export default function ProductPrototype() {
         },
       });
       if (error) return { error: error.message };
-      if (!data.session) {
+      if (!data.session || !isEmailConfirmed(data.user)) {
         const normalizedEmail = form.email.trim().toLowerCase();
         window.sessionStorage.setItem("lume:pending-email", normalizedEmail);
         setPendingEmail(normalizedEmail);
+        if (data.session) {
+          await supabase.auth.signOut({ scope: "local" });
+        }
         navigate("confirm-email");
         return {};
       }
@@ -1414,6 +1644,14 @@ export default function ProductPrototype() {
       password: form.password,
     });
     if (error) return { error: error.message };
+    if (!isEmailConfirmed(data.user)) {
+      const normalizedEmail = form.email.trim().toLowerCase();
+      window.sessionStorage.setItem("lume:pending-email", normalizedEmail);
+      setPendingEmail(normalizedEmail);
+      await supabase.auth.signOut({ scope: "local" });
+      navigate("confirm-email");
+      return {};
+    }
 
     setSession(data.session);
     setDisplayName(data.user.user_metadata.display_name || data.user.email?.split("@")[0] || "Aluno");
@@ -1457,15 +1695,18 @@ export default function ProductPrototype() {
   const checkConfirmation = async (): Promise<AuthFeedback> => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return { error: "A autenticação ainda não está configurada." };
-    const { data } = await supabase.auth.getSession();
+    const [{ data: sessionData }, { data: userData, error: userError }] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.auth.getUser(),
+    ]);
 
-    if (!data.session) {
+    if (userError || !sessionData.session || !isEmailConfirmed(userData.user)) {
       return { error: "Ainda não identificamos a confirmação. Abra o link no mesmo navegador e tente novamente." };
     }
 
     window.sessionStorage.removeItem("lume:pending-email");
     setPendingEmail("");
-    setSession(data.session);
+    setSession(sessionData.session);
     navigate("onboarding");
     return {};
   };
@@ -1539,7 +1780,8 @@ export default function ProductPrototype() {
       case "recover": return <AuthScreen mode={passwordRecovery ? "update" : "recover"} go={go} submit={submitAuth}/>;
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
-      case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
+      case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} startScenario={selectScenario}/>;
+      case "learn": return <LearningCenter displayName={displayName} preferences={preferences} session={session}/>;
       case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
       case "scenarios": return <Scenarios displayName={displayName} preferences={preferences} selectScenario={selectScenario}/>;
       case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences} session={session}/>;

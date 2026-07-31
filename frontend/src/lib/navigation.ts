@@ -1,5 +1,6 @@
 const privateScreens = new Set([
   "dashboard",
+  "learn",
   "plan",
   "scenarios",
   "conversation",
@@ -33,4 +34,19 @@ export function onboardingStorageKeys(userId: string) {
 
 export function scenarioStorageKey(userId: string) {
   return `lume:selected-scenario:${userId}`;
+}
+
+export function isEmailConfirmed(
+  user: { email_confirmed_at?: string | null } | null | undefined,
+) {
+  return Boolean(user?.email_confirmed_at);
+}
+
+export function passwordRecoveryRedirectUrl(origin: string) {
+  return `${origin.replace(/\/+$/, "")}/?auth=recovery`;
+}
+
+export function isPasswordRecoveryCallback(hash: string, search: string) {
+  return hash.includes("type=recovery")
+    || new URLSearchParams(search).get("auth") === "recovery";
 }

@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.schemas.llm import TutorReplyRequest
 from app.services.providers.base import LLMProvider, ProviderResult
+
+logger = logging.getLogger(__name__)
 
 
 class GatewayUnavailableError(RuntimeError):
@@ -67,6 +70,15 @@ class LLMGateway:
                 except Exception as exc:
                     self._record_failure(provider)
                     errors.append(f"{provider.name}: {type(exc).__name__}")
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    logger.warning(
+                        "LLM provider %s failed on attempt %d/%d (%s%s)",
+                        provider.name,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        type(exc).__name__,
+                        f", HTTP {status_code}" if status_code else "",
+                    )
                     if attempt < self.max_retries and self._is_available(provider):
                         await asyncio.sleep(min(0.25 * (2**attempt), 1))
                     else:

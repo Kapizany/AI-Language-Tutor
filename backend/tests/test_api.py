@@ -51,7 +51,7 @@ async def test_private_route_requires_authentication() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_tutor_reply() -> None:
-    budget = BudgetService(Settings())
+    budget = BudgetService(Settings(_env_file=None))
     app.state.gateway = build_test_gateway()
     app.state.budget_service = budget
     app.dependency_overrides[get_current_user] = authenticated_user

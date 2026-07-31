@@ -69,13 +69,35 @@ test("callback de recuperação aceita marcador próprio e evento implícito do 
 });
 
 test("migration contém o catálogo completo que será carregado do Supabase", () => {
-  const migration = readFileSync(
+  const shortContentMigration = readFileSync(
     new URL("../../supabase/migrations/20260731121000_seed_learning_content.sql", import.meta.url),
     "utf8",
   );
-  assert.equal(migration.match(/'(?:en|es|fr|it)-reading-/g)?.length, 160);
-  assert.equal(migration.match(/'(?:en|es|fr|it)-grammar-/g)?.length, 200);
-  assert.equal(migration.match(/'(?:en|es|fr|it)-flashcard-/g)?.length, 200);
+  const readingMigration = readFileSync(
+    new URL("../../supabase/migrations/20260731123000_seed_reading_passages.sql", import.meta.url),
+    "utf8",
+  );
+  assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-reading-/g)?.length, 160);
+  assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-grammar-/g)?.length, 200);
+  assert.equal(shortContentMigration.match(/'(?:en|es|fr|it)-flashcard-/g)?.length, 200);
+  assert.equal(readingMigration.match(/'(?:en|es|fr|it)-passage-/g)?.length, 160);
+
+  const firstPassage = readingMigration.indexOf("('en-passage-");
+  const passageRows = readingMigration.slice(firstPassage).split(/\n(?=\('(?:en|es|fr|it)-passage-)/);
+  for (const level of ["a1", "a2", "b1", "b2"]) {
+    const rows = passageRows.filter((row) => row.startsWith(`('en-passage-${level}-`)
+      || row.startsWith(`('es-passage-${level}-`)
+      || row.startsWith(`('fr-passage-${level}-`)
+      || row.startsWith(`('it-passage-${level}-`));
+    const expectedQuestions = { a1: 3, a2: 4, b1: 5, b2: 7 }[level] || 0;
+    assert.equal(rows.length, 40);
+    rows.forEach((row) => {
+      assert.equal(row.match(/"prompt":/g)?.length, expectedQuestions);
+      if (level === "b1" || level === "b2") {
+        assert.ok((row.match(/\n\n/g)?.length || 0) >= 4);
+      }
+    });
+  }
 });
 
 test("dashboard calcula sequência, semana e progresso diário com atividades reais", () => {

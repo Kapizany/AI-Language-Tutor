@@ -1222,7 +1222,7 @@ function Privacy() {
   );
 }
 
-type LearningMode = "reading" | "grammar" | "flashcard";
+type LearningMode = "quick_lesson" | "reading" | "grammar" | "review";
 
 function LearningCenter({
   displayName,
@@ -1243,14 +1243,21 @@ function LearningCenter({
     catalogClient ? "" : "A conexão com o catálogo ainda não está configurada.",
   );
   const [contentVersion, setContentVersion] = useState(0);
-  const learning = learningContent || { readings: [], grammar: [], flashcards: [] };
-  const [mode, setMode] = useState<LearningMode>("reading");
+  const learning = learningContent || {
+    quickLessons: [],
+    readings: [],
+    grammar: [],
+    flashcards: [],
+  };
+  const [mode, setMode] = useState<LearningMode>("quick_lesson");
   const [level, setLevel] = useState<LearningLevel>(preferredLevel);
   const [activityIndex, setActivityIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [readingQuestionIndex, setReadingQuestionIndex] = useState(0);
+  const [readingCorrectAnswers, setReadingCorrectAnswers] = useState(0);
 
   useEffect(() => {
     if (!catalogClient) return;
@@ -1268,12 +1275,19 @@ function LearningCenter({
     return () => { active = false; };
   }, [catalogClient, contentVersion, language]);
 
+  const quickLessonActivities = learning.quickLessons.filter((item) => item.level === level);
   const readingActivities = learning.readings.filter((item) => item.level === level);
   const grammarActivities = learning.grammar.filter((item) => item.level === level);
-  const activityList = mode === "reading" ? readingActivities : grammarActivities;
-  const activity = activityList[activityIndex];
+  const quickLessonActivity = mode === "quick_lesson" ? quickLessonActivities[activityIndex] : null;
   const readingActivity = mode === "reading" ? readingActivities[activityIndex] : null;
+  const readingQuestion = readingActivity?.questions[readingQuestionIndex];
   const grammarActivity = mode === "grammar" ? grammarActivities[activityIndex] : null;
+  const activity = quickLessonActivity || grammarActivity;
+  const activityCount = mode === "quick_lesson"
+    ? quickLessonActivities.length
+    : mode === "reading"
+      ? readingActivities.length
+      : grammarActivities.length;
 
   const recordProgress = async (activityId: string, activityType: LearningMode, score: number) => {
     if (!session) return;
@@ -1303,6 +1317,8 @@ function LearningCenter({
     setActivityIndex(0);
     setCardIndex(0);
     setFlipped(false);
+    setReadingQuestionIndex(0);
+    setReadingCorrectAnswers(0);
   };
 
   const chooseLevel = (nextLevel: LearningLevel) => {
@@ -1310,28 +1326,49 @@ function LearningCenter({
     setActivityIndex(0);
     setSelectedAnswer(null);
     setSaved(false);
+    setReadingQuestionIndex(0);
+    setReadingCorrectAnswers(0);
   };
 
   const moveActivity = (direction: -1 | 1) => {
     setActivityIndex((current) => {
       const next = current + direction;
-      return Math.max(0, Math.min(activityList.length - 1, next));
+      return Math.max(0, Math.min(activityCount - 1, next));
     });
     setSelectedAnswer(null);
     setSaved(false);
+    setReadingQuestionIndex(0);
+    setReadingCorrectAnswers(0);
   };
 
-  const answer = (index: number) => {
-    if (selectedAnswer !== null) return;
+  const answerActivity = (index: number) => {
+    if (selectedAnswer !== null || !activity) return;
     setSelectedAnswer(index);
     void recordProgress(activity.id, mode, index === activity.answer ? 100 : 0);
+  };
+
+  const answerReading = (index: number) => {
+    if (selectedAnswer !== null || !readingActivity || !readingQuestion) return;
+    const correctAnswers = readingCorrectAnswers + (index === readingQuestion.answer ? 1 : 0);
+    setSelectedAnswer(index);
+    setReadingCorrectAnswers(correctAnswers);
+    if (readingQuestionIndex === readingActivity.questions.length - 1) {
+      const score = Math.round((correctAnswers / readingActivity.questions.length) * 100);
+      void recordProgress(readingActivity.id, "reading", score);
+    }
+  };
+
+  const nextReadingQuestion = () => {
+    if (!readingActivity || readingQuestionIndex >= readingActivity.questions.length - 1) return;
+    setReadingQuestionIndex((current) => current + 1);
+    setSelectedAnswer(null);
   };
 
   const rateCard = (remembered: boolean) => {
     const isLast = cardIndex === learning.flashcards.length - 1;
     void recordProgress(
       `${language}-flashcard-${cardIndex + 1}`,
-      "flashcard",
+      "review",
       remembered ? 100 : 50,
     );
     setCardIndex(isLast ? 0 : cardIndex + 1);
@@ -1341,7 +1378,7 @@ function LearningCenter({
   if (!learningContent) {
     return (
       <div className="screen-content">
-        <AppHeader title="Aprender" subtitle="Leitura, gramática e lições rápidas no seu ritmo." displayName={displayName} preferences={preferences}/>
+        <AppHeader title="Aprender" subtitle="Lições rápidas, leitura, gramática e revisão no seu ritmo." displayName={displayName} preferences={preferences}/>
         <div className="learning-loading">
           {contentError ? <><BookOpen/><p>{contentError}</p><Button onClick={() => setContentVersion((value) => value + 1)}>Tentar novamente</Button></> : <><Sparkles/><p>Carregando seu catálogo...</p></>}
         </div>
@@ -1351,25 +1388,29 @@ function LearningCenter({
 
   return (
     <div className="screen-content">
-      <AppHeader title="Aprender" subtitle="Leitura, gramática e lições rápidas no seu ritmo." displayName={displayName} preferences={preferences}/>
+      <AppHeader title="Aprender" subtitle="Lições rápidas, leitura, gramática e revisão no seu ritmo." displayName={displayName} preferences={preferences}/>
       <div className="learning-tabs" role="tablist">
+        <button className={mode === "quick_lesson" ? "active" : ""} onClick={() => chooseMode("quick_lesson")}><Zap/> Lição rápida</button>
         <button className={mode === "reading" ? "active" : ""} onClick={() => chooseMode("reading")}><BookOpen/> Leitura</button>
         <button className={mode === "grammar" ? "active" : ""} onClick={() => chooseMode("grammar")}><Languages/> Gramática</button>
-        <button className={mode === "flashcard" ? "active" : ""} onClick={() => chooseMode("flashcard")}><Zap/> Lição rápida</button>
+        <button className={mode === "review" ? "active" : ""} onClick={() => chooseMode("review")}><RotateCcw/> Revisar</button>
       </div>
 
-      {mode !== "flashcard" && (
+      {mode !== "review" && (
+        <div className="level-tabs">
+          {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((item) => (
+            <button key={item} className={level === item ? "active" : ""} onClick={() => chooseLevel(item)}>{item}</button>
+          ))}
+        </div>
+      )}
+
+      {(mode === "quick_lesson" || mode === "grammar") && activity && (
         <>
-          <div className="level-tabs">
-            {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((item) => (
-              <button key={item} className={level === item ? "active" : ""} onClick={() => chooseLevel(item)}>{item}</button>
-            ))}
-          </div>
           <article className="learning-activity">
-            <div className="learning-activity-heading"><span className="level-chip">{level} · {languageDetails[language].name}</span><strong>{activityIndex + 1} de {activityList.length}</strong></div>
+            <div className="learning-activity-heading"><span className="level-chip">{level} · {languageDetails[language].name}</span><strong>{activityIndex + 1} de {activityCount}</strong></div>
             <h2>{activity.title}</h2>
             {grammarActivity && <div className="grammar-note"><strong>Como funciona</strong><p>{grammarActivity.explanation}</p><span>{grammarActivity.example}</span></div>}
-            {readingActivity && <p className="reading-text">{readingActivity.text}</p>}
+            {quickLessonActivity && <p className="reading-text">{quickLessonActivity.text}</p>}
             <section className="learning-question">
               <strong>{activity.question}</strong>
               <div>
@@ -1378,7 +1419,7 @@ function LearningCenter({
                   const className = answered
                     ? index === activity.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
                     : "";
-                  return <button key={option} className={className} onClick={() => answer(index)} disabled={answered}>{option}{answered && index === activity.answer && <Check/>}</button>;
+                  return <button key={option} className={className} onClick={() => answerActivity(index)} disabled={answered}>{option}{answered && index === activity.answer && <Check/>}</button>;
                 })}
               </div>
               {selectedAnswer !== null && (
@@ -1390,13 +1431,57 @@ function LearningCenter({
             </section>
             <div className="learning-navigation">
               <Button variant="secondary" disabled={activityIndex === 0} onClick={() => moveActivity(-1)} icon={<ArrowLeft/>}>Anterior</Button>
-              <Button disabled={activityIndex === activityList.length - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próxima</Button>
+              <Button disabled={activityIndex === activityCount - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próxima</Button>
             </div>
           </article>
         </>
       )}
 
-      {mode === "flashcard" && (
+      {mode === "reading" && readingActivity && readingQuestion && (
+        <article className="learning-activity reading-activity">
+          <div className="learning-activity-heading">
+            <span className="level-chip">{level} · {languageDetails[language].name}</span>
+            <strong>Texto {activityIndex + 1} de {activityCount}</strong>
+          </div>
+          <h2>{readingActivity.title}</h2>
+          <div className="reading-passage">
+            {readingActivity.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+          </div>
+          <section className="learning-question reading-comprehension">
+            <div className="reading-question-progress">
+              <strong>Pergunta {readingQuestionIndex + 1} de {readingActivity.questions.length}</strong>
+              <span>{readingCorrectAnswers} acerto{readingCorrectAnswers === 1 ? "" : "s"}</span>
+            </div>
+            <h3>{readingQuestion.prompt}</h3>
+            <div>
+              {readingQuestion.options.map((option, index) => {
+                const answered = selectedAnswer !== null;
+                const className = answered
+                  ? index === readingQuestion.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
+                  : "";
+                return <button key={option} className={className} onClick={() => answerReading(index)} disabled={answered}>{option}{answered && index === readingQuestion.answer && <Check/>}</button>;
+              })}
+            </div>
+            {selectedAnswer !== null && (
+              <div className="reading-feedback">
+                <p className={selectedAnswer === readingQuestion.answer ? "answer-success" : "answer-error"}>
+                  {selectedAnswer === readingQuestion.answer ? "Muito bem! Resposta correta." : "A resposta correta está destacada."}
+                </p>
+                <p>{readingQuestion.explanation}</p>
+                {readingQuestionIndex < readingActivity.questions.length - 1
+                  ? <Button onClick={nextReadingQuestion} icon={<ArrowRight/>}>Próxima pergunta</Button>
+                  : <strong>Leitura concluída: {Math.round((readingCorrectAnswers / readingActivity.questions.length) * 100)}%{saved && " · progresso salvo"}</strong>}
+              </div>
+            )}
+          </section>
+          <div className="learning-navigation">
+            <Button variant="secondary" disabled={activityIndex === 0} onClick={() => moveActivity(-1)} icon={<ArrowLeft/>}>Texto anterior</Button>
+            <Button disabled={activityIndex === activityCount - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próximo texto</Button>
+          </div>
+        </article>
+      )}
+
+      {mode === "review" && (
         <div className="quick-lesson">
           <div className="quick-lesson-progress"><span>50 cartões · dificuldade progressiva</span><strong>{cardIndex + 1}/{learning.flashcards.length}</strong></div>
           <button className={`learning-flashcard${flipped ? " flipped" : ""}`} onClick={() => setFlipped(!flipped)}>

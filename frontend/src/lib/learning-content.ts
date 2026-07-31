@@ -71,6 +71,8 @@ export type GrammarExercise = {
 };
 
 export type Flashcard = {
+  id: string;
+  level: LearningLevel;
   front: string;
   back: string;
 };
@@ -120,7 +122,7 @@ export async function loadLearningContent(
       .order("sort_order"),
     supabase
       .from("review_flashcards")
-      .select("front,back")
+      .select("id,level,front,back")
       .eq("language", language)
       .eq("is_published", true)
       .order("sort_order"),
@@ -216,4 +218,19 @@ export async function loadLearningContent(
   if (incomplete) throw new Error("Learning catalog is incomplete");
 
   return content;
+}
+
+export async function loadReviewFlashcards(
+  supabase: SupabaseClient,
+  language: LearningLanguage,
+): Promise<Flashcard[]> {
+  const { data, error } = await supabase
+    .from("review_flashcards")
+    .select("id,level,front,back")
+    .eq("language", language)
+    .eq("is_published", true)
+    .order("sort_order");
+  if (error) throw error;
+  if (!data?.length) throw new Error("Review catalog is empty");
+  return data as Flashcard[];
 }

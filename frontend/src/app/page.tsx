@@ -50,6 +50,7 @@ import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   loadLearningContent,
+  loadReviewFlashcards,
   type LearningContent,
   type LearningLevel,
 } from "@/lib/learning-content";
@@ -697,19 +698,54 @@ function AppHeader({
   subtitle,
   displayName,
   preferences,
+  onNavigate,
 }: {
   title: string;
   subtitle?: string;
   displayName?: string;
   preferences?: LearnerPreferences | null;
+  onNavigate?: (screen: ScreenId) => void;
 }) {
   const language = preferences ? languageDetails[preferences.targetLanguage] : languageDetails.en;
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [readNotifications, setReadNotifications] = useState<string[]>([]);
+  const notifications: Array<{ id: string; title: string; detail: string; screen: ScreenId }> = [
+    {
+      id: "daily-goal",
+      title: "Sua meta diária está esperando",
+      detail: `Reserve ${preferences?.studyMinutesPerDay || 20} minutos para uma atividade.`,
+      screen: "learn",
+    },
+    {
+      id: "review",
+      title: "Revisão disponível",
+      detail: `Pratique os cartões de ${language.name} e fortaleça sua memória.`,
+      screen: "vocabulary",
+    },
+    {
+      id: "plan",
+      title: "Continue seu plano",
+      detail: `Seu plano considera ${preferences?.studyDaysPerWeek || 5} dias de estudo por semana.`,
+      screen: "plan",
+    },
+  ];
+  const unreadCount = notifications.filter((item) => !readNotifications.includes(item.id)).length;
+
+  const openNotification = (id: string, screen: ScreenId) => {
+    setReadNotifications((current) => current.includes(id) ? current : [...current, id]);
+    setNotificationsOpen(false);
+    onNavigate?.(screen);
+  };
+
   return (
     <header className="app-header">
       <div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       <div className="app-header-tools">
         <button className="language-switch" disabled title="A troca de idioma ficará disponível nas configurações"><span>{language.flag}</span> {language.name}</button>
-        <button className="icon-button" disabled title="Notificações em breve"><Bell size={20}/></button>
+        <div className="notification-center">
+          <button className="icon-button" title="Notificações" aria-label={`Notificações: ${unreadCount} não lidas`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={20}/>{unreadCount > 0 && <i>{unreadCount}</i>}</button>
+          {notificationsOpen && <div className="notification-panel"><header><strong>Notificações</strong>{unreadCount > 0 && <button onClick={() => setReadNotifications(notifications.map((item) => item.id))}>Marcar como lidas</button>}</header>{notifications.map((item) => <button key={item.id} className={readNotifications.includes(item.id) ? "read" : ""} onClick={() => openNotification(item.id, item.screen)}><span/><div><strong>{item.title}</strong><p>{item.detail}</p></div><ChevronRight/></button>)}</div>}
+        </div>
         <div className="user-avatar">{(displayName || "Aluno").slice(0, 2).toUpperCase()}</div>
       </div>
     </header>
@@ -768,7 +804,7 @@ function Dashboard({ go, displayName, preferences, session, startScenario }: { g
   const monthName = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date());
   return (
     <div className="screen-content">
-      <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences}/>
+      <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences} onNavigate={go}/>
       <div className="streak-banner">
         <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>{metricsLoading ? "…" : `${metrics.streak} ${metrics.streak === 1 ? "dia" : "dias"}`}</strong></div></div>
         <div className="week-dots">{["S","T","Q","Q","S","S","D"].map((day, index)=><div key={`${day}-${index}`} className={metrics.activeWeekdays[index] ? "done" : ""}><span>{day}</span><i>{metrics.activeWeekdays[index] ? <Check size={12}/> : ""}</i></div>)}</div>
@@ -1090,27 +1126,129 @@ function Assessment({ displayName, preferences }: { displayName: string; prefere
   );
 }
 
-function Progress({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
+type ProgressPeriod = 7 | 30 | 90 | 0;
+type LearningProgressRow = {
+  activity_type: string;
+  score: number;
+  attempts: number;
+  completed_at: string;
+};
+
+function Progress({ displayName, preferences, session }: { displayName: string; preferences: LearnerPreferences | null; session: Session | null }) {
+  const [period, setPeriod] = useState<ProgressPeriod>(30);
+  const [activities, setActivities] = useState<LearningProgressRow[]>([]);
+  const [tutorInteractions, setTutorInteractions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(Boolean(session));
+  const [progressError, setProgressError] = useState("");
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return;
+    let active = true;
+    const loadProgress = async () => {
+      setLoading(true);
+      setProgressError("");
+      const [learningResult, tutorResult] = await Promise.all([
+        supabase
+          .from("learning_activity_progress")
+          .select("activity_type,score,attempts,completed_at")
+          .eq("user_id", session.user.id)
+          .order("completed_at"),
+        supabase
+          .from("llm_usage_events")
+          .select("created_at")
+          .eq("user_id", session.user.id)
+          .eq("status", "succeeded")
+          .order("created_at"),
+      ]);
+      if (!active) return;
+      if (learningResult.error || tutorResult.error) {
+        setProgressError("Não foi possível carregar todo o seu progresso.");
+      }
+      setActivities((learningResult.data || []) as LearningProgressRow[]);
+      setTutorInteractions((tutorResult.data || []).map((item) => item.created_at));
+      setLoading(false);
+    };
+    void loadProgress();
+    return () => { active = false; };
+  }, [session]);
+
+  const now = new Date();
+  const cutoff = period
+    ? new Date(now.getTime() - period * 24 * 60 * 60 * 1000)
+    : null;
+  const inPeriod = (timestamp: string) => !cutoff || new Date(timestamp) >= cutoff;
+  const visibleActivities = activities.filter((item) => inPeriod(item.completed_at));
+  const visibleInteractions = tutorInteractions.filter(inPeriod);
+  const allTimestamps = [...activities.map((item) => item.completed_at), ...tutorInteractions];
+  const dashboardMetrics = calculateDashboardMetrics(
+    allTimestamps,
+    preferences?.studyDaysPerWeek || 5,
+  );
+  const reviewAttempts = visibleActivities
+    .filter((item) => item.activity_type === "review" || item.activity_type === "flashcard")
+    .reduce((total, item) => total + item.attempts, 0);
+  const estimatedMinutes = visibleActivities.reduce((total, item) => total + item.attempts * 5, 0)
+    + visibleInteractions.length * 2;
+  const skillDefinitions = [
+    ["Lições rápidas", ["quick_lesson"]],
+    ["Revisão", ["review", "flashcard"]],
+    ["Gramática", ["grammar"]],
+    ["Compreensão", ["reading"]],
+  ] as const;
+  const skills = skillDefinitions.map(([label, types]) => {
+    const rows = visibleActivities.filter((item) => (types as readonly string[]).includes(item.activity_type));
+    const score = rows.length
+      ? Math.round(rows.reduce((total, item) => total + item.score, 0) / rows.length)
+      : 0;
+    return { label, score, count: rows.length };
+  });
+  const chartDays = period || Math.max(
+    30,
+    Math.ceil((now.getTime() - Math.min(
+      now.getTime(),
+      ...allTimestamps.map((timestamp) => new Date(timestamp).getTime()),
+    )) / 86_400_000),
+  );
+  const bucketCount = Math.min(12, chartDays);
+  const bucketSize = Math.max(1, Math.ceil(chartDays / bucketCount));
+  const chartValues = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketEndDaysAgo = (bucketCount - index - 1) * bucketSize;
+    const bucketStartDaysAgo = bucketEndDaysAgo + bucketSize;
+    const bucketStart = new Date(now.getTime() - bucketStartDaysAgo * 86_400_000);
+    const bucketEnd = new Date(now.getTime() - bucketEndDaysAgo * 86_400_000);
+    const count = [
+      ...visibleActivities.map((item) => item.completed_at),
+      ...visibleInteractions,
+    ].filter((timestamp) => {
+      const date = new Date(timestamp);
+      return date >= bucketStart && date < bucketEnd;
+    }).length;
+    return { count, label: index % 2 === 0 ? `${bucketStart.getDate()}/${bucketStart.getMonth() + 1}` : "" };
+  });
+  const maxChartValue = Math.max(1, ...chartValues.map((item) => item.count));
+
   return (
     <div className="screen-content">
       <AppHeader title="Seu progresso" subtitle="Evidências reais do que você vem construindo." displayName={displayName} preferences={preferences}/>
-      <div className="period-tabs"><button disabled>7 dias</button><button className="active">30 dias</button><button disabled>3 meses</button><button disabled>Todo período</button></div>
+      <div className="period-tabs">{([[7, "7 dias"], [30, "30 dias"], [90, "3 meses"], [0, "Todo período"]] as Array<[ProgressPeriod, string]>).map(([value, label]) => <button key={value} className={period === value ? "active" : ""} onClick={() => setPeriod(value)}>{label}</button>)}</div>
+      {progressError && <div className="form-message form-error" role="alert">{progressError}</div>}
       <div className="stats-grid">
-        <Stat icon={<Clock3/>} value="8h 10min" label="tempo de estudo" tone="teal"/>
-        <Stat icon={<MessageCircle/>} value="18" label="conversas concluídas" tone="coral"/>
-        <Stat icon={<BookOpen/>} value="124" label="palavras revisadas" tone="blue"/>
-        <Stat icon={<Flame/>} value="7 dias" label="sequência atual" tone="amber"/>
+        <Stat icon={<Clock3/>} value={loading ? "…" : `${Math.floor(estimatedMinutes / 60)}h ${estimatedMinutes % 60}min`} label="tempo estimado de estudo" tone="teal"/>
+        <Stat icon={<CheckCircle2/>} value={loading ? "…" : String(visibleActivities.length)} label="atividades concluídas" tone="coral"/>
+        <Stat icon={<MessageCircle/>} value={loading ? "…" : String(visibleInteractions.length)} label="interações com o tutor" tone="blue"/>
+        <Stat icon={<Flame/>} value={loading ? "…" : `${dashboardMetrics.streak} ${dashboardMetrics.streak === 1 ? "dia" : "dias"}`} label="sequência atual" tone="amber"/>
       </div>
       <div className="analytics-grid">
         <section className="chart-card">
-          <div className="section-heading compact"><div><span className="eyebrow">ATIVIDADE</span><h2>Minutos estudados</h2></div><span className="trend">+18% este mês</span></div>
-          <div className="bar-chart">{[28,42,18,55,68,36,74,52,44,82,61,92].map((height,index)=><div key={index}><i style={{height:`${height}%`}}/><span>{index % 2 ? "" : `${index+1}/7`}</span></div>)}</div>
+          <div className="section-heading compact"><div><span className="eyebrow">ATIVIDADE REAL</span><h2>Atividades por período</h2></div><span className="trend">{visibleActivities.length + visibleInteractions.length} registros</span></div>
+          <div className="bar-chart">{chartValues.map((item,index)=><div key={index} title={`${item.count} atividades`}><i style={{height:`${Math.max(item.count ? 8 : 0, Math.round((item.count / maxChartValue) * 100))}%`}}/><span>{item.label}</span></div>)}</div>
         </section>
-        <section className="skills-card"><span className="eyebrow">HABILIDADES</span><h2>Seu inglês hoje</h2>{[["Conversação",72],["Vocabulário",84],["Gramática",66],["Compreensão",78]].map(([skill,value])=><div key={skill as string}><span>{skill}<strong>{value}%</strong></span><i><b style={{width:`${value}%`}}/></i></div>)}<small>Estimativas baseadas nas suas atividades recentes.</small></section>
+        <section className="skills-card"><span className="eyebrow">DESEMPENHO</span><h2>{preferences ? languageDetails[preferences.targetLanguage].name : "Idioma estudado"}</h2>{skills.map((skill)=><div key={skill.label}><span>{skill.label}<strong>{skill.count ? `${skill.score}%` : "—"}</strong></span><i><b style={{width:`${skill.score}%`}}/></i></div>)}<small>Médias calculadas somente com respostas registradas no período.</small></section>
       </div>
       <div className="progress-bottom">
-        <section className="milestones"><div className="section-heading compact"><h2>Marcos recentes</h2></div><div><span><Trophy/></span><p><strong>7 dias de consistência</strong><small>Conquistado hoje</small></p></div><div><span><MessageCircle/></span><p><strong>15 conversas concluídas</strong><small>Há 3 dias</small></p></div><div><span><BookOpen/></span><p><strong>100 palavras revisadas</strong><small>Há 1 semana</small></p></div></section>
-        <section className="error-insights"><div className="section-heading compact"><h2>O que merece atenção</h2></div><p><span>Artigos: a / an / the</span><strong>8 ocorrências</strong></p><p><span>Present simple</span><strong>5 ocorrências</strong></p><p><span>Preposições</span><strong>3 ocorrências</strong></p><small>Use isso como direção, não como nota.</small></section>
+        <section className="milestones"><div className="section-heading compact"><h2>Marcos atuais</h2></div><div><span><Trophy/></span><p><strong>{visibleActivities.length} atividades concluídas</strong><small>No período selecionado</small></p></div><div><span><MessageCircle/></span><p><strong>{visibleInteractions.length} interações com o tutor</strong><small>Respostas de IA concluídas</small></p></div><div><span><BookOpen/></span><p><strong>{reviewAttempts} cartões revisados</strong><small>Tentativas de revisão registradas</small></p></div></section>
+        <section className="error-insights"><div className="section-heading compact"><h2>Distribuição das atividades</h2></div>{skills.map((skill) => <p key={skill.label}><span>{skill.label}</span><strong>{skill.count}</strong></p>)}<small>Os números refletem somente atividades persistidas no Supabase.</small></section>
       </div>
     </div>
   );
@@ -1323,7 +1461,15 @@ function LearningCenter({
     const load = async () => {
       setContentError("");
       try {
-        const content = await loadLearningContent(catalogClient, language);
+        const content = reviewOnly
+          ? {
+              quickLessons: [],
+              readings: [],
+              grammarTopics: [],
+              grammarExercises: [],
+              flashcards: await loadReviewFlashcards(catalogClient, language),
+            }
+          : await loadLearningContent(catalogClient, language);
         if (active) setLearningContent(content);
       } catch {
         if (active) setContentError("Não foi possível carregar as lições. Tente novamente.");
@@ -1331,7 +1477,7 @@ function LearningCenter({
     };
     void load();
     return () => { active = false; };
-  }, [catalogClient, contentVersion, language]);
+  }, [catalogClient, contentVersion, language, reviewOnly]);
 
   const quickLessonActivities = learning.quickLessons.filter((item) => item.level === level);
   const readingActivities = learning.readings.filter((item) => item.level === level);
@@ -1482,8 +1628,10 @@ function LearningCenter({
 
   const rateCard = (remembered: boolean) => {
     const isLast = cardIndex === learning.flashcards.length - 1;
+    const flashcard = learning.flashcards[cardIndex];
+    if (!flashcard) return;
     void recordProgress(
-      `${language}-flashcard-${cardIndex + 1}`,
+      flashcard.id,
       "review",
       remembered ? 100 : 50,
     );
@@ -2156,7 +2304,7 @@ export default function ProductPrototype() {
       case "summary": return <Summary go={go}/>;
       case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review"/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
-      case "progress": return <Progress displayName={displayName} preferences={preferences}/>;
+      case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
       case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;
       case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
     }

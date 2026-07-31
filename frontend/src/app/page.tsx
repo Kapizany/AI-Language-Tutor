@@ -74,10 +74,13 @@ import {
   type ScreenId,
 } from "@/lib/learner";
 import {
+  loadLearnerLearningProgress,
   loadLearningContent,
   loadReviewFlashcards,
   type LearningContent,
   type LearningLevel,
+  type LearningSection,
+  type LearningSectionProgress,
 } from "@/lib/learning-content";
 import { calculateDashboardMetrics } from "@/lib/progress";
 import {
@@ -1140,6 +1143,8 @@ function LearningCenter({
   const [readingCorrectAnswers, setReadingCorrectAnswers] = useState(0);
   const [grammarView, setGrammarView] = useState<GrammarView>("explanations");
   const [grammarExerciseIndex, setGrammarExerciseIndex] = useState(0);
+  const [completedActivityIds, setCompletedActivityIds] = useState<Set<string>>(new Set());
+  const [sectionProgress, setSectionProgress] = useState<LearningSectionProgress[]>([]);
 
   useEffect(() => {
     if (!catalogClient) return;
@@ -1156,14 +1161,21 @@ function LearningCenter({
               flashcards: await loadReviewFlashcards(catalogClient, language),
             }
           : await loadLearningContent(catalogClient, language);
-        if (active) setLearningContent(content);
+        const progress = session
+          ? await loadLearnerLearningProgress(catalogClient, session.user.id)
+          : { completedActivityIds: [], sections: [] };
+        if (active) {
+          setLearningContent(content);
+          setCompletedActivityIds(new Set(progress.completedActivityIds));
+          setSectionProgress(progress.sections);
+        }
       } catch {
         if (active) setContentError("Não foi possível carregar as lições. Tente novamente.");
       }
     };
     void load();
     return () => { active = false; };
-  }, [catalogClient, contentVersion, language, reviewOnly]);
+  }, [catalogClient, contentVersion, language, reviewOnly, session]);
 
   const quickLessonActivities = learning.quickLessons.filter((item) => item.level === level);
   const readingActivities = learning.readings.filter((item) => item.level === level);
@@ -1181,6 +1193,101 @@ function LearningCenter({
     : mode === "reading"
       ? readingActivities.length
       : grammarTopics.length;
+  const completedQuickLessons = learning.quickLessons.filter(
+    (item) => completedActivityIds.has(item.id),
+  ).length;
+  const completedReadings = learning.readings.filter(
+    (item) => completedActivityIds.has(item.id),
+  ).length;
+  const completedGrammarExercises = learning.grammarExercises.filter(
+    (item) => completedActivityIds.has(item.id),
+  ).length;
+  const grammarTopicComplete = Boolean(grammarExercises.length)
+    && grammarExercises.every((exercise) => completedActivityIds.has(exercise.id));
+
+  const sectionCursor = (section: LearningSection, cursorLevel = level) =>
+    sectionProgress.find((item) =>
+      item.language === language && item.section === section && item.level === cursorLevel);
+
+  const saveSectionCursor = async (
+    section: LearningSection,
+    cursorLevel: LearningLevel,
+    activityId: string,
+    stepIndex = 0,
+    correctAnswers = 0,
+    view: LearningSectionProgress["view"] = "activity",
+  ) => {
+    if (!session) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const { error } = await supabase.rpc("save_learning_section_progress", {
+      p_language: language,
+      p_section: section,
+      p_level: cursorLevel,
+      p_activity_id: activityId,
+      p_step_index: stepIndex,
+      p_correct_answers: correctAnswers,
+      p_view: view,
+    });
+    if (error) return;
+    setSectionProgress((current) => [
+      ...current.filter((item) =>
+        !(item.language === language && item.section === section && item.level === cursorLevel)),
+      {
+        language,
+        section,
+        level: cursorLevel,
+        activityId,
+        stepIndex,
+        correctAnswers,
+        view,
+      },
+    ]);
+  };
+
+  const firstIncompleteIndex = (items: Array<{ id: string }>) => {
+    const index = items.findIndex((item) => !completedActivityIds.has(item.id));
+    return index < 0 ? 0 : index;
+  };
+
+  const resumeSection = (section: LearningSection, cursorLevel: LearningLevel) => {
+    const items = section === "quick_lesson"
+      ? learning.quickLessons.filter((item) => item.level === cursorLevel)
+      : section === "reading"
+        ? learning.readings.filter((item) => item.level === cursorLevel)
+        : learning.grammarTopics.filter((item) => item.level === cursorLevel);
+    const cursor = sectionCursor(section, cursorLevel);
+    const cursorIndex = cursor
+      ? items.findIndex((item) => item.id === cursor.activityId)
+      : -1;
+    const cursorCompleted = cursor
+      && section !== "grammar"
+      && completedActivityIds.has(cursor.activityId);
+    const nextIndex = cursorIndex >= 0 && !cursorCompleted
+      ? cursorIndex
+      : firstIncompleteIndex(items);
+    const resumedTopic = section === "grammar" ? items[nextIndex] : null;
+    const resumedExercises = resumedTopic
+      ? learning.grammarExercises.filter((item) => item.topicId === resumedTopic.id)
+      : [];
+    const firstIncompleteExercise = resumedExercises.findIndex(
+      (exercise) => !completedActivityIds.has(exercise.id),
+    );
+    const grammarStep = cursorIndex === nextIndex
+      && cursor
+      && !completedActivityIds.has(resumedExercises[cursor.stepIndex]?.id)
+        ? cursor.stepIndex
+        : Math.max(0, firstIncompleteExercise);
+    setActivityIndex(nextIndex);
+    setSelectedAnswer(null);
+    setSaved(false);
+    setReadingQuestionIndex(section === "reading" ? cursor?.stepIndex || 0 : 0);
+    setReadingCorrectAnswers(section === "reading" ? cursor?.correctAnswers || 0 : 0);
+    setGrammarView(
+      section === "grammar" && cursor?.view === "exercises" ? "exercises" : "explanations",
+    );
+    setGrammarExerciseIndex(section === "grammar" ? grammarStep : 0);
+  };
 
   const recordProgress = async (activityId: string, activityType: LearningMode, score: number) => {
     if (!session) return;
@@ -1191,20 +1298,27 @@ function LearningCenter({
       p_activity_type: activityType,
       p_score: score,
     });
-    if (!error) setSaved(true);
+    if (!error) {
+      setSaved(true);
+      setCompletedActivityIds((current) => new Set(current).add(activityId));
+    }
   };
 
   const chooseMode = (nextMode: LearningMode) => {
     setMode(nextMode);
     setSelectedAnswer(null);
     setSaved(false);
-    setActivityIndex(0);
     setCardIndex(0);
     setFlipped(false);
     setReadingQuestionIndex(0);
     setReadingCorrectAnswers(0);
     setGrammarView("explanations");
     setGrammarExerciseIndex(0);
+    if (nextMode === "quick_lesson" || nextMode === "reading" || nextMode === "grammar") {
+      resumeSection(nextMode, level);
+    } else {
+      setActivityIndex(0);
+    }
   };
 
   const openCatalogItem = (
@@ -1221,11 +1335,22 @@ function LearningCenter({
     setReadingCorrectAnswers(0);
     setGrammarView("explanations");
     setGrammarExerciseIndex(0);
+    const items = nextMode === "quick_lesson"
+      ? learning.quickLessons.filter((item) => item.level === nextLevel)
+      : nextMode === "reading"
+        ? learning.readings.filter((item) => item.level === nextLevel)
+        : learning.grammarTopics.filter((item) => item.level === nextLevel);
+    const activity = items[index];
+    if (activity) void saveSectionCursor(nextMode, nextLevel, activity.id);
   };
 
   const chooseLevel = (nextLevel: LearningLevel) => {
     setLevel(nextLevel);
-    setActivityIndex(0);
+    if (mode === "quick_lesson" || mode === "reading" || mode === "grammar") {
+      resumeSection(mode, nextLevel);
+    } else {
+      setActivityIndex(0);
+    }
     setSelectedAnswer(null);
     setSaved(false);
     setReadingQuestionIndex(0);
@@ -1235,8 +1360,25 @@ function LearningCenter({
 
   const moveActivity = (direction: -1 | 1) => {
     setActivityIndex((current) => {
-      const next = current + direction;
-      return Math.max(0, Math.min(activityCount - 1, next));
+      const items = mode === "quick_lesson"
+        ? quickLessonActivities
+        : mode === "reading"
+          ? readingActivities
+          : grammarTopics;
+      let next = current + direction;
+      while (
+        next >= 0
+        && next < items.length
+        && completedActivityIds.has(items[next].id)
+      ) {
+        next += direction;
+      }
+      const bounded = Math.max(0, Math.min(activityCount - 1, next));
+      const activity = items[bounded];
+      if (activity && (mode === "quick_lesson" || mode === "reading" || mode === "grammar")) {
+        void saveSectionCursor(mode, level, activity.id);
+      }
+      return bounded;
     });
     setSelectedAnswer(null);
     setSaved(false);
@@ -1266,8 +1408,21 @@ function LearningCenter({
   };
 
   const moveGrammarExercise = (direction: -1 | 1) => {
-    setGrammarExerciseIndex((current) =>
-      Math.max(0, Math.min(grammarExercises.length - 1, current + direction)));
+    setGrammarExerciseIndex((current) => {
+      let next = current + direction;
+      while (
+        next >= 0
+        && next < grammarExercises.length
+        && completedActivityIds.has(grammarExercises[next].id)
+      ) {
+        next += direction;
+      }
+      const bounded = Math.max(0, Math.min(grammarExercises.length - 1, next));
+      if (grammarTopic) {
+        void saveSectionCursor("grammar", level, grammarTopic.id, bounded, 0, "exercises");
+      }
+      return bounded;
+    });
     setSelectedAnswer(null);
     setSaved(false);
   };
@@ -1277,6 +1432,21 @@ function LearningCenter({
     setGrammarExerciseIndex(0);
     setSelectedAnswer(null);
     setSaved(false);
+    if (grammarTopic) {
+      const firstExercise = grammarExercises.findIndex(
+        (exercise) => !completedActivityIds.has(exercise.id),
+      );
+      const nextExerciseIndex = firstExercise < 0 ? 0 : firstExercise;
+      setGrammarExerciseIndex(nextExerciseIndex);
+      void saveSectionCursor(
+        "grammar",
+        level,
+        grammarTopic.id,
+        nextExerciseIndex,
+        0,
+        view,
+      );
+    }
   };
 
   const chooseGrammarTopic = (index: number) => {
@@ -1284,6 +1454,8 @@ function LearningCenter({
     setGrammarExerciseIndex(0);
     setSelectedAnswer(null);
     setSaved(false);
+    const topic = grammarTopics[index];
+    if (topic) void saveSectionCursor("grammar", level, topic.id, 0, 0, "explanations");
   };
 
   const answerReading = (index: number) => {
@@ -1294,6 +1466,14 @@ function LearningCenter({
     if (readingQuestionIndex === readingActivity.questions.length - 1) {
       const score = Math.round((correctAnswers / readingActivity.questions.length) * 100);
       void recordProgress(readingActivity.id, "reading", score);
+    } else {
+      void saveSectionCursor(
+        "reading",
+        level,
+        readingActivity.id,
+        readingQuestionIndex,
+        correctAnswers,
+      );
     }
   };
 
@@ -1308,8 +1488,16 @@ function LearningCenter({
 
   const nextReadingQuestion = () => {
     if (!readingActivity || readingQuestionIndex >= readingActivity.questions.length - 1) return;
-    setReadingQuestionIndex((current) => current + 1);
+    const nextIndex = readingQuestionIndex + 1;
+    setReadingQuestionIndex(nextIndex);
     setSelectedAnswer(null);
+    void saveSectionCursor(
+      "reading",
+      level,
+      readingActivity.id,
+      nextIndex,
+      readingCorrectAnswers,
+    );
   };
 
   const rateCard = (remembered: boolean) => {
@@ -1364,28 +1552,35 @@ function LearningCenter({
           </header>
           <div className="catalog-sections">
             <article>
-              <div className="catalog-section-title"><span><Zap/></span><div><h3>Lições rápidas</h3><p>Textos curtos e uma pergunta para praticar em poucos minutos.</p></div><strong>{learning.quickLessons.length}</strong></div>
+              <div className="catalog-section-title"><span><Zap/></span><div><h3>Lições rápidas</h3><p>Textos curtos e uma pergunta para praticar em poucos minutos.</p></div><strong>{completedQuickLessons}/{learning.quickLessons.length}</strong></div>
               {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
                 const items = learning.quickLessons.filter((item) => item.level === catalogLevel);
-                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} lições</strong><ChevronRight/></summary><div>{items.map((item, index) => <button key={item.id} onClick={() => openCatalogItem("quick_lesson", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.question}</small></div><ArrowRight/></button>)}</div></details>;
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.filter((item) => completedActivityIds.has(item.id)).length}/{items.length} concluídas</strong><ChevronRight/></summary><div>{items.map((item, index) => {
+                  const completed = completedActivityIds.has(item.id);
+                  return <button key={item.id} className={completed ? "completed" : ""} disabled={completed} onClick={() => openCatalogItem("quick_lesson", catalogLevel, index)}><span>{completed ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{completed ? "Concluída" : item.question}</small></div>{!completed && <ArrowRight/>}</button>;
+                })}</div></details>;
               })}
             </article>
 
             <article>
-              <div className="catalog-section-title"><span><BookOpen/></span><div><h3>Leituras</h3><p>Textos progressivos com questionários de compreensão.</p></div><strong>{learning.readings.length}</strong></div>
+              <div className="catalog-section-title"><span><BookOpen/></span><div><h3>Leituras</h3><p>Textos progressivos com questionários de compreensão.</p></div><strong>{completedReadings}/{learning.readings.length}</strong></div>
               {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
                 const items = learning.readings.filter((item) => item.level === catalogLevel);
-                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} textos</strong><ChevronRight/></summary><div>{items.map((item, index) => <button key={item.id} onClick={() => openCatalogItem("reading", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.paragraphs.length} parágrafos · {item.questions.length} perguntas</small></div><ArrowRight/></button>)}</div></details>;
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.filter((item) => completedActivityIds.has(item.id)).length}/{items.length} concluídos</strong><ChevronRight/></summary><div>{items.map((item, index) => {
+                  const completed = completedActivityIds.has(item.id);
+                  return <button key={item.id} className={completed ? "completed" : ""} disabled={completed} onClick={() => openCatalogItem("reading", catalogLevel, index)}><span>{completed ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{completed ? "Concluído" : `${item.paragraphs.length} parágrafos · ${item.questions.length} perguntas`}</small></div>{!completed && <ArrowRight/>}</button>;
+                })}</div></details>;
               })}
             </article>
 
             <article>
-              <div className="catalog-section-title"><span><Languages/></span><div><h3>Gramática</h3><p>Explicações completas e exercícios organizados por tema.</p></div><strong>{learning.grammarTopics.length}</strong></div>
+              <div className="catalog-section-title"><span><Languages/></span><div><h3>Gramática</h3><p>Explicações completas e exercícios organizados por tema.</p></div><strong>{completedGrammarExercises}/{learning.grammarExercises.length}</strong></div>
               {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
                 const items = learning.grammarTopics.filter((item) => item.level === catalogLevel);
                 return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} temas</strong><ChevronRight/></summary><div>{items.map((item, index) => {
                   const exerciseCount = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id).length;
-                  return <button key={item.id} onClick={() => openCatalogItem("grammar", catalogLevel, index)}><span>{index + 1}</span><div><strong>{item.title}</strong><small>{item.useCases.length} casos de uso · {exerciseCount} exercícios</small></div><ArrowRight/></button>;
+                  const completedCount = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id && completedActivityIds.has(exercise.id)).length;
+                  return <button key={item.id} onClick={() => openCatalogItem("grammar", catalogLevel, index)}><span>{completedCount === exerciseCount ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{item.useCases.length} casos de uso · {completedCount}/{exerciseCount} exercícios</small></div><ArrowRight/></button>;
                 })}</div></details>;
               })}
             </article>
@@ -1460,7 +1655,7 @@ function LearningCenter({
               <section className="grammar-notes"><h3>Para lembrar</h3><ul>{grammarTopic.notes.map((note) => <li key={note}>{note}</li>)}</ul></section>
               <div className="learning-navigation">
                 <Button variant="secondary" disabled={activityIndex === 0} onClick={() => moveActivity(-1)} icon={<ArrowLeft/>}>Tema anterior</Button>
-                <Button onClick={() => chooseGrammarView("exercises")} icon={<CheckCircle2/>}>Praticar este tema</Button>
+                <Button disabled={grammarTopicComplete} onClick={() => chooseGrammarView("exercises")} icon={<CheckCircle2/>}>{grammarTopicComplete ? "Exercícios concluídos" : "Praticar este tema"}</Button>
                 <Button disabled={activityIndex === activityCount - 1} onClick={() => moveActivity(1)} icon={<ArrowRight/>}>Próximo tema</Button>
               </div>
             </article>

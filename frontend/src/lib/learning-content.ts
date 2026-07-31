@@ -85,6 +85,53 @@ export type LearningContent = {
   flashcards: Flashcard[];
 };
 
+export type LearningSection = "quick_lesson" | "reading" | "grammar";
+
+export type LearningSectionProgress = {
+  language: LearningLanguage;
+  section: LearningSection;
+  level: LearningLevel;
+  activityId: string;
+  stepIndex: number;
+  correctAnswers: number;
+  view: "activity" | "explanations" | "exercises";
+};
+
+export type LearnerLearningProgress = {
+  completedActivityIds: string[];
+  sections: LearningSectionProgress[];
+};
+
+export async function loadLearnerLearningProgress(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<LearnerLearningProgress> {
+  const [completedResult, sectionsResult] = await Promise.all([
+    supabase
+      .from("learning_activity_progress")
+      .select("activity_id")
+      .eq("user_id", userId),
+    supabase
+      .from("learning_section_progress")
+      .select("language,section,level,activity_id,step_index,correct_answers,view")
+      .eq("user_id", userId),
+  ]);
+  if (completedResult.error) throw completedResult.error;
+  if (sectionsResult.error) throw sectionsResult.error;
+  return {
+    completedActivityIds: (completedResult.data || []).map(({ activity_id }) => activity_id),
+    sections: (sectionsResult.data || []).map((row) => ({
+      language: row.language as LearningLanguage,
+      section: row.section as LearningSection,
+      level: row.level as LearningLevel,
+      activityId: row.activity_id,
+      stepIndex: row.step_index,
+      correctAnswers: row.correct_answers,
+      view: row.view as LearningSectionProgress["view"],
+    })),
+  };
+}
+
 export async function loadLearningContent(
   supabase: SupabaseClient,
   language: LearningLanguage,

@@ -101,6 +101,52 @@ select public.save_learner_settings(
   true
 );
 
+select public.save_learning_section_progress(
+  'en',
+  'reading',
+  'A1',
+  'en-passage-a1-01',
+  2,
+  1,
+  'activity'
+);
+
+do $$
+begin
+  begin
+    update public.learning_section_progress
+    set step_index = 99;
+    raise exception 'Authorization failure: direct learning progress update was allowed';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$$;
+
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000002', true);
+
+do $$
+begin
+  if (select count(*) from public.learning_section_progress) <> 0 then
+    raise exception 'RLS failure: user B can see user A learning cursor';
+  end if;
+end;
+$$;
+
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
+
+do $$
+begin
+  if (
+    select step_index
+    from public.learning_section_progress
+    where section = 'reading' and level = 'A1'
+  ) <> 2 then
+    raise exception 'Learning progress failure: reading cursor was not persisted';
+  end if;
+end;
+$$;
+
 set local role postgres;
 
 do $$

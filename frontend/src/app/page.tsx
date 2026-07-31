@@ -178,7 +178,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "scenarios", label: "Cenários", icon: Globe2, group: "Produto" },
   { id: "conversation", label: "Conversa", icon: Mic2, group: "Produto" },
   { id: "summary", label: "Resumo", icon: CheckCircle2, group: "Produto" },
-  { id: "vocabulary", label: "Vocabulário", icon: BookOpen, group: "Produto" },
+  { id: "vocabulary", label: "Revisar", icon: RotateCcw, group: "Produto" },
   { id: "assessment", label: "Avaliação", icon: GraduationCap, group: "Progresso" },
   { id: "progress", label: "Progresso", icon: BarChart3, group: "Progresso" },
   { id: "profile", label: "Perfil", icon: Settings, group: "Conta" },
@@ -1076,29 +1076,6 @@ function Summary({ go }: { go: (id: ScreenId) => void }) {
   );
 }
 
-function Vocabulary({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
-  const [flipped, setFlipped] = useState(false);
-  return (
-    <div className="screen-content">
-      <AppHeader title="Revisão inteligente" subtitle="Seu vocabulário será organizado aqui." displayName={displayName} preferences={preferences}/>
-      <div className="review-header">
-        <div><span className="eyebrow">SESSÃO DE HOJE</span><h2>Fortaleça sua memória em 4 minutos</h2><div className="review-progress"><i/><span>1 de 12</span></div></div>
-        <div className="memory-count"><Zap/><div><strong>87%</strong><span>retenção estimada</span></div></div>
-      </div>
-      <div className="flashcard-layout">
-        <main>
-          <div className={`flashcard${flipped ? " flipped" : ""}`} role="button" tabIndex={0} onClick={() => setFlipped(!flipped)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setFlipped(!flipped); }}>
-            <span className="card-tag">INGLÊS · CAFETERIA</span>
-            {!flipped ? <><small>Como você diria...</small><h2>“Eu gostaria de um café com leite.”</h2><span className="tap-hint"><RotateCcw size={16}/> Toque para revelar</span></> : <><small>Resposta</small><h2>I’d like a coffee with milk.</h2><button className="audio-word" disabled onClick={(event) => event.stopPropagation()}><Volume2/> Áudio em breve</button><p><strong>I’d like</strong> é uma forma educada e natural de fazer pedidos.</p></>}
-          </div>
-          <div className="review-actions"><span>Quão fácil foi lembrar?</span><div><button disabled>Difícil<small>1 dia</small></button><button disabled>Bom<small>3 dias</small></button><button disabled>Fácil<small>7 dias</small></button></div></div>
-        </main>
-        <aside className="review-queue"><h3>Fila de hoje</h3><div className="queue-summary"><span><strong>12</strong>novas</span><span><strong>8</strong>revisões</span><span><strong>4 min</strong>estimativa</span></div><div className="queue-list">{["I’d like...","whole milk","large","How much..."].map((word, index)=><div key={word}><span>{index + 1}</span><p><strong>{word}</strong><small>{index === 0 ? "Agora" : `em ${index + 1} cartões`}</small></p></div>)}</div></aside>
-      </div>
-    </div>
-  );
-}
-
 function Assessment({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
   return (
     <div className="screen-content assessment-screen">
@@ -1302,11 +1279,14 @@ function LearningCenter({
   displayName,
   preferences,
   session,
+  initialMode = "quick_lesson",
 }: {
   displayName: string;
   preferences: LearnerPreferences | null;
   session: Session | null;
+  initialMode?: LearningMode;
 }) {
+  const reviewOnly = initialMode === "review";
   const language = preferences?.targetLanguage || "en";
   const preferredLevel = (["A1", "A2", "B1", "B2"].includes(preferences?.currentLevel || "")
     ? preferences?.currentLevel
@@ -1323,7 +1303,7 @@ function LearningCenter({
     grammar: [],
     flashcards: [],
   };
-  const [mode, setMode] = useState<LearningMode>("quick_lesson");
+  const [mode, setMode] = useState<LearningMode>(initialMode);
   const [level, setLevel] = useState<LearningLevel>(preferredLevel);
   const [activityIndex, setActivityIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
@@ -1452,7 +1432,7 @@ function LearningCenter({
   if (!learningContent) {
     return (
       <div className="screen-content">
-        <AppHeader title="Aprender" subtitle="Lições rápidas, leitura, gramática e revisão no seu ritmo." displayName={displayName} preferences={preferences}/>
+        <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName} preferences={preferences}/>
         <div className="learning-loading">
           {contentError ? <><BookOpen/><p>{contentError}</p><Button onClick={() => setContentVersion((value) => value + 1)}>Tentar novamente</Button></> : <><Sparkles/><p>Carregando seu catálogo...</p></>}
         </div>
@@ -1462,13 +1442,14 @@ function LearningCenter({
 
   return (
     <div className="screen-content">
-      <AppHeader title="Aprender" subtitle="Lições rápidas, leitura, gramática e revisão no seu ritmo." displayName={displayName} preferences={preferences}/>
-      <div className="learning-tabs" role="tablist">
-        <button className={mode === "quick_lesson" ? "active" : ""} onClick={() => chooseMode("quick_lesson")}><Zap/> Lição rápida</button>
-        <button className={mode === "reading" ? "active" : ""} onClick={() => chooseMode("reading")}><BookOpen/> Leitura</button>
-        <button className={mode === "grammar" ? "active" : ""} onClick={() => chooseMode("grammar")}><Languages/> Gramática</button>
-        <button className={mode === "review" ? "active" : ""} onClick={() => chooseMode("review")}><RotateCcw/> Revisar</button>
-      </div>
+      <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName} preferences={preferences}/>
+      {!reviewOnly && (
+        <div className="learning-tabs" role="tablist">
+          <button className={mode === "quick_lesson" ? "active" : ""} onClick={() => chooseMode("quick_lesson")}><Zap/> Lição rápida</button>
+          <button className={mode === "reading" ? "active" : ""} onClick={() => chooseMode("reading")}><BookOpen/> Leitura</button>
+          <button className={mode === "grammar" ? "active" : ""} onClick={() => chooseMode("grammar")}><Languages/> Gramática</button>
+        </div>
+      )}
 
       {mode !== "review" && (
         <div className="level-tabs">
@@ -1586,7 +1567,7 @@ function AppNav({
     ["learn", "Aprender", GraduationCap],
     ["plan", "Meu plano", Map],
     ["scenarios", "Conversar", MessageCircle],
-    ["vocabulary", "Revisar", BookOpen],
+    ["vocabulary", "Revisar", RotateCcw],
     ["progress", "Progresso", BarChart3],
   ];
   return (
@@ -2003,12 +1984,12 @@ export default function ProductPrototype() {
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
       case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} startScenario={selectScenario}/>;
-      case "learn": return <LearningCenter displayName={displayName} preferences={preferences} session={session}/>;
+      case "learn": return <LearningCenter key="learn" displayName={displayName} preferences={preferences} session={session}/>;
       case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} startScenario={selectScenario}/>;
       case "scenarios": return <Scenarios displayName={displayName} preferences={preferences} selectScenario={selectScenario}/>;
       case "conversation": return <Conversation go={go} scenario={selectedScenario} preferences={preferences} session={session}/>;
       case "summary": return <Summary go={go}/>;
-      case "vocabulary": return <Vocabulary displayName={displayName} preferences={preferences}/>;
+      case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review"/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences}/>;
       case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;

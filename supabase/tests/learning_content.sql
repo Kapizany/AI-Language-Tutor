@@ -49,7 +49,56 @@ begin
     if not (a1_average < a2_average and a2_average < b1_average and b1_average < b2_average) then
       raise exception 'Quick lesson complexity failure for %', language_code;
     end if;
+
+    if (
+      select count(*) from public.grammar_topics
+      where language = language_code and is_published
+    ) <> 40 then
+      raise exception 'Grammar catalog failure for %: expected 40 topics', language_code;
+    end if;
+
+    if exists (
+      select level
+      from public.grammar_topics
+      where language = language_code and is_published
+      group by level
+      having count(*) <> 10
+    ) then
+      raise exception 'Grammar catalog failure for %: expected 10 topics per level', language_code;
+    end if;
   end loop;
+
+  if (
+    select count(*)
+    from public.grammar_topics
+    where id like '%-grammar-extra-%' and is_published
+  ) <> 32 then
+    raise exception 'Grammar catalog failure: expected 32 extended topics';
+  end if;
+
+  if exists (
+    select topic.id
+    from public.grammar_topics topic
+    left join public.grammar_exercises exercise
+      on exercise.topic_id = topic.id and exercise.is_published
+    where topic.id like '%-grammar-extra-%'
+    group by topic.id
+    having count(exercise.id) <> 5
+  ) then
+    raise exception 'Grammar catalog failure: every extended topic needs five exercises';
+  end if;
+
+  if exists (
+    select topic.id
+    from public.grammar_topics topic
+    left join public.grammar_exercises exercise
+      on exercise.topic_id = topic.id and exercise.is_published
+    where topic.is_published
+    group by topic.id
+    having count(exercise.id) <> 5
+  ) then
+    raise exception 'Grammar catalog failure: every topic needs five exercises';
+  end if;
 end;
 $$;
 

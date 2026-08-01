@@ -445,6 +445,9 @@ function Onboarding({
     currentLevel: initialPreferences?.currentLevel || "unknown",
     learningGoal: initialPreferences?.learningGoal || "conversation",
     studyMinutesPerDay: initialPreferences?.studyMinutesPerDay || 20,
+    correctionPreference: initialPreferences?.correctionPreference || "immediate",
+    interests: initialPreferences?.interests || [],
+    desiredScenarios: initialPreferences?.desiredScenarios || [],
   });
   const [draftRestored, setDraftRestored] = useState(false);
   const [feedback, setFeedback] = useState<AuthFeedback>({});
@@ -454,7 +457,23 @@ function Onboarding({
     { title: "Como está seu nível hoje?", subtitle: "Não se preocupe: você poderá fazer uma avaliação depois." },
     { title: "Qual é seu principal objetivo?", subtitle: "Usaremos isso para priorizar cenários e vocabulário." },
     { title: "Quanto tempo cabe na sua rotina?", subtitle: "Uma meta realista funciona melhor do que uma meta perfeita." },
+    { title: "Como você prefere receber correções?", subtitle: "Você poderá mudar essa preferência no perfil." },
+    { title: "O que mais combina com você?", subtitle: "Escolha interesses e tipos de cenário para personalizar as recomendações." },
   ];
+  const totalSteps = questions.length;
+
+  const toggleSelection = (
+    field: "interests" | "desiredScenarios",
+    value: string,
+  ) => {
+    const selected = data[field];
+    setData({
+      ...data,
+      [field]: selected.includes(value)
+        ? selected.filter((item) => item !== value)
+        : [...selected, value],
+    });
+  };
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -468,11 +487,11 @@ function Onboarding({
           window.sessionStorage.removeItem(keys.draft);
         }
       }
-      if (savedStep >= 1 && savedStep <= 4) setStep(savedStep);
+      if (savedStep >= 1 && savedStep <= totalSteps) setStep(savedStep);
       setDraftRestored(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [userId]);
+  }, [totalSteps, userId]);
 
   useEffect(() => {
     if (!draftRestored) return;
@@ -482,7 +501,7 @@ function Onboarding({
   }, [data, draftRestored, step, userId]);
 
   const next = async () => {
-    if (step < 4) {
+    if (step < totalSteps) {
       setStep(step + 1);
       return;
     }
@@ -499,8 +518,8 @@ function Onboarding({
 
   return (
     <div className="onboarding-shell">
-      <header className="simple-header"><Brand onClick={() => go("landing")}/><span className="step-label">Passo {step} de 4</span><span /></header>
-      <div className="onboarding-progress">{[1,2,3,4].map((item) => <i key={item} className={item <= step ? "complete" : ""}/>)}</div>
+      <header className="simple-header"><Brand onClick={() => go("landing")}/><span className="step-label">Passo {step} de {totalSteps}</span><span /></header>
+      <div className="onboarding-progress">{Array.from({ length: totalSteps }, (_, index) => index + 1).map((item) => <i key={item} className={item <= step ? "complete" : ""}/>)}</div>
       <main className="onboarding-main">
         <span className="question-count">{String(step).padStart(2, "0")}</span>
         <h1>{questions[step - 1].title}</h1>
@@ -549,10 +568,39 @@ function Onboarding({
             </button>
           ))}
         </div>}
+        {step === 5 && <div className="language-grid choice-grid">
+          {([
+            ["Durante a conversa", "Corrigir um ponto importante de cada vez", "immediate"],
+            ["Em pequenos grupos", "Agrupar os principais ajustes sem interromper tanto", "grouped"],
+            ["Somente ao final", "Priorizar fluidez e revisar no resumo", "final"],
+          ] as const).map(([name, description, value]) => (
+            <button key={value} className={data.correctionPreference === value ? "selected" : ""} onClick={() => setData({...data, correctionPreference: value})}>
+              <div><strong>{name}</strong><small>{description}</small></div>{data.correctionPreference === value && <CheckCircle2/>}
+            </button>
+          ))}
+        </div>}
+        {step === 6 && <div className="onboarding-preferences">
+          <fieldset>
+            <legend>Interesses</legend>
+            <div className="filter-pills">
+              {([["travel", "Viagens"], ["culture", "Cultura"], ["business", "Negócios"], ["food", "Gastronomia"], ["technology", "Tecnologia"], ["music", "Música"]] as const).map(([value, label]) => (
+                <button type="button" key={value} className={data.interests.includes(value) ? "active" : ""} aria-pressed={data.interests.includes(value)} onClick={() => toggleSelection("interests", value)}>{label}</button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Cenários desejados</legend>
+            <div className="filter-pills">
+              {([["daily", "Cotidiano"], ["professional", "Profissional"], ["travel", "Viagem"]] as const).map(([value, label]) => (
+                <button type="button" key={value} className={data.desiredScenarios.includes(value) ? "active" : ""} aria-pressed={data.desiredScenarios.includes(value)} onClick={() => toggleSelection("desiredScenarios", value)}>{label}</button>
+              ))}
+            </div>
+          </fieldset>
+        </div>}
         {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
         <div className="onboarding-actions">
           <Button variant="ghost" disabled={step === 1 || submitting} onClick={() => setStep(Math.max(1, step - 1))}><ArrowLeft size={18}/> Voltar</Button>
-          <Button onClick={next} disabled={submitting} icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Salvando..." : step === 4 ? "Criar meu plano" : "Continuar"}</Button>
+          <Button onClick={next} disabled={submitting} icon={submitting ? undefined : <ArrowRight size={18}/>}>{submitting ? "Salvando..." : step === totalSteps ? "Criar meu plano" : "Continuar"}</Button>
         </div>
       </main>
     </div>
@@ -964,6 +1012,9 @@ function Profile({
     learningGoal: "conversation",
     studyMinutesPerDay: 20,
     studyDaysPerWeek: 5,
+    correctionPreference: "immediate",
+    interests: [],
+    desiredScenarios: [],
   });
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [saving, setSaving] = useState(false);
@@ -998,6 +1049,7 @@ function Profile({
             <label>Objetivo principal<select value={draft.learningGoal} onChange={(event) => setDraft({...draft, learningGoal: event.target.value as OnboardingData["learningGoal"]})}>{Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Minutos por dia<select value={draft.studyMinutesPerDay} onChange={(event) => setDraft({...draft, studyMinutesPerDay: Number(event.target.value) as OnboardingData["studyMinutesPerDay"]})}>{[10,20,30,60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutos</option>)}</select></label>
             <label>Dias por semana<select value={draft.studyDaysPerWeek} onChange={(event) => setDraft({...draft, studyDaysPerWeek: Number(event.target.value)})}>{[1,2,3,4,5,6,7].map((days) => <option key={days} value={days}>{days} {days === 1 ? "dia" : "dias"}</option>)}</select></label>
+            <label>Correções<select value={draft.correctionPreference} onChange={(event) => setDraft({...draft, correctionPreference: event.target.value as OnboardingData["correctionPreference"]})}><option value="immediate">Durante a conversa</option><option value="grouped">Em pequenos grupos</option><option value="final">Somente ao final</option></select></label>
           </div></section>}
           {section === "notifications" && <section><h3>Notificações</h3><p>Os lembretes ainda não são enviados. Essa opção será ativada quando o serviço de notificações estiver disponível.</p></section>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
@@ -1916,7 +1968,7 @@ export default function ProductPrototype() {
             .maybeSingle(),
           supabase
             .from("learner_preferences")
-            .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week")
+            .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week,correction_preference,interests,desired_scenarios")
             .eq("user_id", currentSession.user.id)
             .maybeSingle(),
         ]);
@@ -2142,7 +2194,7 @@ export default function ProductPrototype() {
         .maybeSingle(),
       supabase
         .from("learner_preferences")
-        .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week")
+        .select("target_language,current_level,learning_goal,study_minutes_per_day,study_days_per_week,correction_preference,interests,desired_scenarios")
         .eq("user_id", data.user.id)
         .maybeSingle(),
     ]);
@@ -2205,6 +2257,9 @@ export default function ProductPrototype() {
       p_study_minutes_per_day: data.studyMinutesPerDay,
       p_study_days_per_week: 5,
       p_complete_onboarding: true,
+      p_correction_preference: data.correctionPreference,
+      p_interests: data.interests,
+      p_desired_scenarios: data.desiredScenarios,
     });
     if (error) return { error: "Não foi possível concluir o onboarding. Tente novamente." };
 
@@ -2228,6 +2283,9 @@ export default function ProductPrototype() {
       p_study_minutes_per_day: nextPreferences.studyMinutesPerDay,
       p_study_days_per_week: nextPreferences.studyDaysPerWeek,
       p_complete_onboarding: false,
+      p_correction_preference: nextPreferences.correctionPreference,
+      p_interests: nextPreferences.interests,
+      p_desired_scenarios: nextPreferences.desiredScenarios,
     });
     if (error) return { error: "Não foi possível salvar as alterações. Tente novamente." };
 

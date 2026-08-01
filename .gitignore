@@ -224,6 +224,8 @@ node_modules/
 .next/
 out/
 *.tsbuildinfo
+playwright-report/
+test-results/
 
 # Visual Studio Code
 #   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 

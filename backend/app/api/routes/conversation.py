@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from app.schemas.llm import (
 )
 from app.services.budget import BudgetExceededError
 from app.services.conversation import (
+    CachedGeneration,
     ConversationRejectedError,
     ConversationService,
     ConversationUnavailableError,
@@ -169,6 +171,42 @@ async def send_conversation_message(
     except ConversationRejectedError as exc:
         raise _rejection(exc) from exc
 
+    cached = await conversations.cached_generation(
+        request_id=payload.request_id,
+        session_id=session_id,
+        user_id=user.id,
+    )
+    if cached is not None:
+        try:
+            stored = await conversations.append_exchange(
+                session_id=session_id,
+                user_id=user.id,
+                learner_message=payload.message,
+                tutor_reply=cached.result.reply,
+                correction=cached.result.correction,
+                request_id=payload.request_id,
+            )
+        except ConversationUnavailableError as exc:
+            raise _unavailable() from exc
+        except ConversationRejectedError as exc:
+            raise _rejection(exc) from exc
+        return SendConversationMessageResponse(
+            request_id=payload.request_id,
+            learner_sequence=stored.learner_sequence,
+            tutor_sequence=stored.tutor_sequence,
+            result=cached.result,
+            usage=UsageSummary(
+                provider=cached.provider,
+                model=cached.model,
+                input_tokens=cached.input_tokens,
+                output_tokens=cached.output_tokens,
+                estimated_cost_usd=cached.estimated_cost_usd,
+                latency_ms=cached.latency_ms,
+            ),
+            learner_message_count=stored.learner_message_count,
+            max_learner_messages=stored.max_learner_messages,
+        )
+
     # Validar a sessão antes de reservar orçamento evita queimar parte do limite
     # diário do aluno em uma requisição que nunca poderia gerar resposta.
     if not context.is_active:
@@ -199,7 +237,21 @@ async def send_conversation_message(
             system_prompt=TUTOR_SYSTEM_PROMPT,
             user_prompt=build_tutor_prompt(context.to_prompt_context(), payload.message),
             output_model=TutorReply,
+            request_id=payload.request_id,
         )
+    except asyncio.CancelledError as exc:
+        await budget.finalize(
+            request_id=payload.request_id,
+            status="failed",
+            provider=primary.name,
+            model=primary.model,
+            latency_ms=round((time.monotonic() - started_at) * 1_000),
+            error_code="generation_cancelled",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Geração cancelada.",
+        ) from exc
     except GatewayUnavailableError as exc:
         await budget.finalize(
             request_id=payload.request_id,
@@ -215,6 +267,21 @@ async def send_conversation_message(
         ) from exc
 
     latency_ms = round((time.monotonic() - started_at) * 1_000)
+    cached = CachedGeneration(
+        result=generated.result,
+        provider=generated.provider,
+        model=generated.model,
+        input_tokens=generated.input_tokens,
+        output_tokens=generated.output_tokens,
+        estimated_cost_usd=generated.estimated_cost_usd,
+        latency_ms=latency_ms,
+    )
+    await conversations.cache_generation(
+        request_id=payload.request_id,
+        session_id=session_id,
+        user_id=user.id,
+        generation=cached,
+    )
     await budget.finalize(
         request_id=payload.request_id,
         status="succeeded",
@@ -329,6 +396,7 @@ async def complete_conversation(
             system_prompt=SUMMARY_SYSTEM_PROMPT,
             user_prompt=build_summary_prompt(context.to_prompt_context()),
             output_model=SessionSummary,
+            request_id=request_id,
         )
     except GatewayUnavailableError as exc:
         await budget.finalize(
@@ -398,3 +466,23 @@ async def abandon_conversation(
     except ConversationRejectedError as exc:
         raise _rejection(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{session_id}/generations/{request_id}",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_conversation_generation(
+    session_id: UUID,
+    request_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    conversations: ConversationDependency,
+    gateway: GatewayDependency,
+) -> dict[str, bool]:
+    try:
+        await conversations.context(session_id=session_id, user_id=user.id)
+    except ConversationUnavailableError as exc:
+        raise _unavailable() from exc
+    except ConversationRejectedError as exc:
+        raise _rejection(exc) from exc
+    return {"cancelled": gateway.cancel(request_id)}

@@ -14,6 +14,25 @@ _REPLY_BY_LANGUAGE = {
     "it": "Ottimo inizio! Cosa vorresti dire adesso?",
 }
 
+_CORRECTIONS = {
+    "yesterday i go to the airport.": "Yesterday I went to the airport.",
+    "can you explain me how the interview works?": (
+        "Can you explain to me how the interview works?"
+    ),
+    "ayer voy al museo con mi amiga.": "Ayer fui al museo con mi amiga.",
+    "me gustaría saber como puedo preparar la entrevista.": (
+        "Me gustaría saber cómo puedo prepararme para la entrevista."
+    ),
+    "hier je vais au cinéma avec mes amis.": "Hier, je suis allé au cinéma avec mes amis.",
+    "pouvez-vous me dire comment préparer pour l'entretien ?": (
+        "Pouvez-vous me dire comment me préparer pour l’entretien ?"
+    ),
+    "ieri vado alla stazione con mio fratello.": "Ieri sono andato alla stazione con mio fratello.",
+    "vorrei sapere come posso preparare per il colloquio.": (
+        "Vorrei sapere come posso prepararmi per il colloquio."
+    ),
+}
+
 
 class MockProvider(LLMProvider):
     """Provedor determinístico para testes e desenvolvimento local sem custo.
@@ -44,13 +63,21 @@ class MockProvider(LLMProvider):
         message_match = _LAST_LEARNER_MESSAGE.search(user_prompt)
         learner_message = (message_match.group(1) if message_match else "").strip()
 
+        normalized_message = learner_message.lower()
         correction = None
-        if learner_message.lower() == "i want one coffee":
+        if normalized_message == "i want one coffee":
             correction = {
                 "original": learner_message,
                 "corrected": "I'd like a coffee, please.",
                 "explanation_pt_br": "Em pedidos, “I'd like...” soa mais natural e educado.",
                 "severity": "minor",
+            }
+        elif normalized_message in _CORRECTIONS:
+            correction = {
+                "original": learner_message,
+                "corrected": _CORRECTIONS[normalized_message],
+                "explanation_pt_br": "Ajuste de estrutura para uma formulação correta e natural.",
+                "severity": "important",
             }
         return json.dumps(
             {

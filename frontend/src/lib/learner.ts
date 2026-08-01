@@ -34,6 +34,9 @@ export type OnboardingData = {
   currentLevel: LearnerLevelId;
   learningGoal: "travel" | "career" | "conversation" | "exam";
   studyMinutesPerDay: 10 | 20 | 30 | 60;
+  correctionPreference: "immediate" | "grouped" | "final";
+  interests: string[];
+  desiredScenarios: string[];
 };
 
 export type LearnerPreferences = OnboardingData & {
@@ -46,6 +49,9 @@ export type LearnerPreferencesRow = {
   learning_goal: OnboardingData["learningGoal"];
   study_minutes_per_day: OnboardingData["studyMinutesPerDay"];
   study_days_per_week: number;
+  correction_preference: OnboardingData["correctionPreference"];
+  interests: string[];
+  desired_scenarios: string[];
 };
 
 export const mapLearnerPreferences = (row: LearnerPreferencesRow): LearnerPreferences => ({
@@ -54,6 +60,9 @@ export const mapLearnerPreferences = (row: LearnerPreferencesRow): LearnerPrefer
   learningGoal: row.learning_goal,
   studyMinutesPerDay: row.study_minutes_per_day,
   studyDaysPerWeek: row.study_days_per_week,
+  correctionPreference: row.correction_preference,
+  interests: row.interests || [],
+  desiredScenarios: row.desired_scenarios || [],
 });
 
 export const languageDetails: Record<TargetLanguage, { flag: string; name: string }> = {
@@ -79,6 +88,15 @@ export const goalLabels: Record<OnboardingData["learningGoal"], string> = {
   career: "Carreira",
   conversation: "Conversação",
   exam: "Preparação para provas",
+};
+
+export const correctionPreferenceLabels: Record<
+  OnboardingData["correctionPreference"],
+  string
+> = {
+  immediate: "Corrigir durante a conversa",
+  grouped: "Agrupar correções importantes",
+  final: "Revisar apenas ao final",
 };
 
 export const shortLevel = (level: LearnerLevelId) => levelLabels[level].split(" · ")[0];

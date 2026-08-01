@@ -129,7 +129,7 @@ async function request<T>(
     signal,
   }: {
     accessToken: string;
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "DELETE";
     body?: unknown;
     signal?: AbortSignal;
   },
@@ -245,6 +245,17 @@ export function completeConversation(accessToken: string, sessionId: string) {
 
 export function abandonConversation(accessToken: string, sessionId: string) {
   return request<void>(`/api/v1/conversations/${sessionId}/abandon`, { accessToken });
+}
+
+export function cancelConversationGeneration(
+  accessToken: string,
+  sessionId: string,
+  requestId: string,
+) {
+  return request<{ cancelled: boolean }>(
+    `/api/v1/conversations/${sessionId}/generations/${requestId}`,
+    { accessToken, method: "DELETE" },
+  );
 }
 
 export async function loadScenarioCatalog(

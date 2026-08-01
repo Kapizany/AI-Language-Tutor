@@ -2,12 +2,18 @@ from functools import lru_cache
 from typing import Annotated, Any
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
 from app.core.config import Settings, get_settings
 from app.schemas.auth import AuthenticatedUser
+from app.services.auth import (
+    AuthTokenRejectedError,
+    AuthUserMismatchError,
+    AuthUserUnavailableError,
+    EmailNotConfirmedError,
+)
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -60,6 +66,7 @@ def get_token_verifier() -> TokenVerifier:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> AuthenticatedUser:
     if credentials is None:
@@ -69,8 +76,29 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     claims = get_token_verifier().verify(credentials.credentials)
+    try:
+        account = await request.app.state.auth_user_verifier.require_confirmed_user(
+            token=credentials.credentials,
+            expected_user_id=claims["sub"],
+        )
+    except EmailNotConfirmedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email confirmation is required.",
+        ) from exc
+    except (AuthUserMismatchError, AuthTokenRejectedError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated account mismatch.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except AuthUserUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account validation is temporarily unavailable.",
+        ) from exc
     return AuthenticatedUser(
         id=claims["sub"],
-        email=claims.get("email"),
+        email=account.get("email") or claims.get("email"),
         role=claims.get("role", "authenticated"),
     )

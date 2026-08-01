@@ -120,6 +120,45 @@ Add the same values as GitHub Actions variables in the `development`
 environment. The publishable key is safe to expose in the browser; database
 access is protected with Supabase Row Level Security.
 
+## Complete local setup
+
+Prerequisites: Node.js 22, Python 3.12+, `uv`, Docker, Terraform 1.10+ and the
+Supabase CLI (or `npx supabase@latest`).
+
+```bash
+cp frontend/.env.example frontend/.env.local
+cp backend/.env.example backend/.env
+npm --prefix frontend ci
+cd backend && uv sync --frozen --dev && cd ..
+npx supabase@latest start
+npx supabase@latest db reset
+```
+
+Use the local values printed by Supabase in `frontend/.env.local` and
+`backend/.env`. Keep provider keys empty when running backend tests; tests use a
+deterministic mock.
+
+Start the applications in separate terminals:
+
+```bash
+npm --prefix frontend run dev
+cd backend && uv run uvicorn app.main:app --reload
+```
+
+Run all validation:
+
+```bash
+./scripts/validate-all.sh
+RUN_E2E=1 ./scripts/validate-all.sh
+```
+
+The tutor evaluation dataset and provider comparison commands are documented
+in [`docs/LLM_EVALUATION.md`](docs/LLM_EVALUATION.md).
+
+The project intentionally uses Supabase CLI instead of a parallel Docker
+Compose definition because authentication, email capture, Storage and database
+must be tested together. See `docs/adr/0006-local-development.md`.
+
 ## Database migrations
 
 Database changes live under `supabase/migrations`. The Supabase GitHub

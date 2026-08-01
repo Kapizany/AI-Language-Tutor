@@ -13,6 +13,7 @@ from app.schemas.llm import (
     LearnerLevel,
     SessionSummary,
     TargetLanguage,
+    TutorReply,
 )
 from app.services.providers.common import ConversationPromptContext, HistoryMessage
 
@@ -69,6 +70,7 @@ class ConversationContext:
     max_learner_messages: int
     previously_corrected: tuple[str, ...]
     messages: tuple[ConversationMessageView, ...]
+    correction_preference: str = "immediate"
 
     @property
     def is_active(self) -> bool:
@@ -96,6 +98,7 @@ class ConversationContext:
             total_message_count=self.message_count,
             previously_corrected=self.previously_corrected,
             planned_minutes=self.planned_minutes,
+            correction_preference=self.correction_preference,
         )
 
 
@@ -105,6 +108,17 @@ class StoredExchange:
     tutor_sequence: int
     learner_message_count: int
     max_learner_messages: int
+
+
+@dataclass(frozen=True)
+class CachedGeneration:
+    result: TutorReply
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    latency_ms: int
 
 
 class ConversationService:
@@ -173,6 +187,21 @@ class ConversationService:
         )
         if not result.get("found", False):
             raise ConversationRejectedError("session_not_found")
+        preference_response = await self.client.get(
+            "/learner_preferences",
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "correction_preference",
+                "limit": "1",
+            },
+        )
+        preference_response.raise_for_status()
+        preference_rows = preference_response.json()
+        correction_preference = (
+            preference_rows[0].get("correction_preference", "immediate")
+            if preference_rows
+            else "immediate"
+        )
         return ConversationContext(
             status=result["status"],
             scenario_id=result["scenario_id"],
@@ -186,6 +215,7 @@ class ConversationService:
             learner_message_count=int(result["learner_message_count"]),
             correction_count=int(result["correction_count"]),
             max_learner_messages=int(result["max_learner_messages"]),
+            correction_preference=correction_preference,
             previously_corrected=tuple(result.get("previously_corrected") or ()),
             messages=tuple(
                 ConversationMessageView(
@@ -231,6 +261,71 @@ class ConversationService:
             learner_message_count=int(result["learner_message_count"]),
             max_learner_messages=int(result["max_learner_messages"]),
         )
+
+    async def cached_generation(
+        self,
+        *,
+        request_id: UUID,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> CachedGeneration | None:
+        if not self.enabled:
+            return None
+        response = await self.client.get(
+            "/conversation_generation_results",
+            params={
+                "request_id": f"eq.{request_id}",
+                "session_id": f"eq.{session_id}",
+                "user_id": f"eq.{user_id}",
+                "select": (
+                    "result,provider,model,input_tokens,output_tokens,estimated_cost_usd,latency_ms"
+                ),
+                "limit": "1",
+            },
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            return None
+        row = rows[0]
+        return CachedGeneration(
+            result=TutorReply.model_validate(row["result"]),
+            provider=row["provider"],
+            model=row["model"],
+            input_tokens=int(row["input_tokens"]),
+            output_tokens=int(row["output_tokens"]),
+            estimated_cost_usd=float(row["estimated_cost_usd"]),
+            latency_ms=int(row["latency_ms"]),
+        )
+
+    async def cache_generation(
+        self,
+        *,
+        request_id: UUID,
+        session_id: UUID,
+        user_id: UUID,
+        generation: CachedGeneration,
+    ) -> None:
+        if not self.enabled:
+            return
+        response = await self.client.post(
+            "/conversation_generation_results",
+            params={"on_conflict": "request_id"},
+            headers={"Prefer": "resolution=ignore-duplicates,return=minimal"},
+            json={
+                "request_id": str(request_id),
+                "session_id": str(session_id),
+                "user_id": str(user_id),
+                "result": generation.result.model_dump(mode="json"),
+                "provider": generation.provider,
+                "model": generation.model,
+                "input_tokens": generation.input_tokens,
+                "output_tokens": generation.output_tokens,
+                "estimated_cost_usd": generation.estimated_cost_usd,
+                "latency_ms": generation.latency_ms,
+            },
+        )
+        response.raise_for_status()
 
     async def complete(
         self,

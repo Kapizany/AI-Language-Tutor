@@ -19,6 +19,7 @@ import { Button, ProgressRing } from "@/components/ui";
 import { renderScenarioIcon } from "@/components/scenario-icons";
 import {
   abandonConversation,
+  cancelConversationGeneration,
   ConversationApiError,
   completeConversation,
   formatElapsed,
@@ -84,6 +85,7 @@ export function Conversation({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [retryText, setRetryText] = useState("");
+  const [retryRequestId, setRetryRequestId] = useState("");
   const [ending, setEnding] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [listening, setListening] = useState(false);
@@ -94,7 +96,9 @@ export function Conversation({
   const [savingVoiceConsent, setSavingVoiceConsent] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
+  const [continuedAfterGoal, setContinuedAfterGoal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const generationRequestRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordingTimerRef = useRef<number | null>(null);
@@ -223,7 +227,7 @@ export function Conversation({
   const reachedMessageLimit = Boolean(conversation) && learnerMessageCount >= maxLearnerMessages;
   const remainingMessages = Math.max(0, maxLearnerMessages - learnerMessageCount);
 
-  const send = async (text: string) => {
+  const send = async (text: string, existingRequestId?: string) => {
     if (!conversation || !accessToken || sending) return;
     const trimmed = text.trim();
     if (!trimmed || reachedMessageLimit) return;
@@ -240,15 +244,18 @@ export function Conversation({
     setShowHint(false);
     setSendError("");
     setRetryText("");
+    setRetryRequestId("");
     setSending(true);
 
     try {
-      // Cada tentativa usa um `request_id` novo: o anterior já foi finalizado na
-      // contabilidade de custo e seria recusado como duplicado.
+      // Uma nova ação recebe um UUID novo; o retry de falhas de rede/persistência
+      // reutiliza o mesmo UUID para recuperar a resposta durável sem novo custo.
+      const requestId = existingRequestId || crypto.randomUUID();
+      generationRequestRef.current = requestId;
       const result = await sendConversationMessage(
         accessToken,
         conversation.session_id,
-        { message: trimmed, requestId: crypto.randomUUID() },
+        { message: trimmed, requestId },
         controller.signal,
       );
       setMessages((current) => [
@@ -275,6 +282,8 @@ export function Conversation({
       if (controller.signal.aborted) {
         setSendError("Geração cancelada.");
         setRetryText(trimmed);
+        // Uma geração efetivamente cancelada precisa de uma nova reserva.
+        setRetryRequestId("");
         // A requisição pode ter sido concluída no servidor depois do cancelamento,
         // então relemos o estado real em vez de adivinhar.
         await resync();
@@ -285,15 +294,27 @@ export function Conversation({
             : "Não foi possível enviar sua mensagem.",
         );
         setRetryText(trimmed);
+        setRetryRequestId(generationRequestRef.current || "");
         if (error instanceof ConversationApiError && error.status === 409) await resync();
       }
     } finally {
       abortRef.current = null;
+      generationRequestRef.current = null;
       setSending(false);
     }
   };
 
-  const cancelGeneration = () => abortRef.current?.abort();
+  const cancelGeneration = async () => {
+    const requestId = generationRequestRef.current;
+    if (requestId && conversation && accessToken) {
+      await cancelConversationGeneration(
+        accessToken,
+        conversation.session_id,
+        requestId,
+      ).catch(() => undefined);
+    }
+    abortRef.current?.abort();
+  };
 
   const stopDictation = () => {
     pressingMicRef.current = false;
@@ -526,6 +547,22 @@ export function Conversation({
           {conversation.resumed && <span className="resumed-chip">Conversa retomada</span>}
         </div>
 
+        {overPlannedTime && !continuedAfterGoal && (
+          <div className="session-time-goal" role="status" aria-live="polite">
+            <Clock3 aria-hidden="true" />
+            <div>
+              <strong>Você completou os {conversation.planned_minutes} minutos planejados.</strong>
+              <p>Você pode encerrar e receber o resumo ou continuar praticando.</p>
+            </div>
+            <Button variant="secondary" onClick={() => setContinuedAfterGoal(true)}>
+              Continuar
+            </Button>
+            <Button onClick={() => void endSession()} disabled={ending || sending}>
+              Ver resumo
+            </Button>
+          </div>
+        )}
+
         <div className="conversation-messages" ref={transcriptRef}>
           <div className="time-divider">
             <span>Início da prática</span>
@@ -573,7 +610,11 @@ export function Conversation({
                 {sendError}
               </div>
               {retryText && (
-                <Button variant="secondary" onClick={() => void send(retryText)} disabled={sending}>
+                <Button
+                  variant="secondary"
+                  onClick={() => void send(retryText, retryRequestId || undefined)}
+                  disabled={sending}
+                >
                   Tentar novamente <RotateCcw size={14} />
                 </Button>
               )}

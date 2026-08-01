@@ -1,3 +1,6 @@
+import asyncio
+from uuid import uuid4
+
 import pytest
 
 from app.schemas.llm import ConversationRole, LLMTask, SessionSummary, TutorReply
@@ -42,6 +45,19 @@ class OffSchemaProvider(LLMProvider):
             output_tokens=9,
             estimated_cost_usd=0.0001,
         )
+
+
+class BlockingProvider(LLMProvider):
+    name = "blocking"
+    model = "waits-until-cancelled"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def complete(self, request: CompletionRequest) -> CompletionResult:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 def build_gateway(
@@ -222,3 +238,44 @@ def test_history_window_limits_prompt_growth() -> None:
     assert "message-40" in prompt
     assert "] message-1\n" not in prompt
     assert f"{len(history) - TUTOR_HISTORY_WINDOW} earlier messages are omitted" in prompt
+    assert "Condensed earlier context" in prompt
+    assert "learner: message-28" in prompt
+
+
+def test_correction_preference_changes_tutor_instruction() -> None:
+    base = prompt_context()
+    context = ConversationPromptContext(
+        target_language=base.target_language,
+        learner_level=base.learner_level,
+        scenario_id=base.scenario_id,
+        objective_pt_br=base.objective_pt_br,
+        history=base.history,
+        total_message_count=base.total_message_count,
+        correction_preference="final",
+    )
+
+    prompt = build_tutor_prompt(context, "I goed there yesterday")
+
+    assert "set correction to null" in prompt
+
+
+@pytest.mark.asyncio
+async def test_active_generation_can_be_cancelled_by_request_id() -> None:
+    provider = BlockingProvider()
+    gateway = build_gateway([provider])
+    request_id = uuid4()
+    generation = asyncio.create_task(
+        gateway.generate(
+            task=LLMTask.TUTOR_REPLY,
+            system_prompt=TUTOR_SYSTEM_PROMPT,
+            user_prompt=tutor_prompt("Hello"),
+            output_model=TutorReply,
+            request_id=request_id,
+        )
+    )
+
+    await provider.started.wait()
+    assert gateway.cancel(request_id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await generation
+    assert request_id not in gateway.active_requests

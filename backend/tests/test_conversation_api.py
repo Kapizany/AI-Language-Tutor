@@ -17,9 +17,11 @@ from app.schemas.llm import (
     LearnerLevel,
     SessionSummary,
     TargetLanguage,
+    TutorReply,
 )
 from app.services.budget import BudgetService
 from app.services.conversation import (
+    CachedGeneration,
     ConversationRejectedError,
     ConversationService,
     StartedSession,
@@ -55,6 +57,7 @@ class ConversationHarness:
 
     def __init__(self) -> None:
         self.conversations = AsyncMock(spec=ConversationService)
+        self.conversations.cached_generation.return_value = None
         self.budget = BudgetService(Settings(_env_file=None))
 
     async def __aenter__(self) -> "ConversationHarness":
@@ -155,6 +158,39 @@ async def test_send_message_persists_the_exchange() -> None:
     assert stored["learner_message"] == "I want one coffee"
     assert stored["tutor_reply"] == payload["result"]["reply"]
     assert stored["correction"].severity is CorrectionSeverity.MINOR
+    harness.conversations.cache_generation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_replays_cached_generation_without_calling_provider() -> None:
+    cached = CachedGeneration(
+        result=TutorReply(reply="Recovered reply"),
+        provider="gemini",
+        model="gemini-test",
+        input_tokens=12,
+        output_tokens=4,
+        estimated_cost_usd=0.00001,
+        latency_ms=120,
+    )
+    async with ConversationHarness() as harness:
+        harness.conversations.context.return_value = conversation_context()
+        harness.conversations.cached_generation.return_value = cached
+        harness.conversations.append_exchange.return_value = StoredExchange(
+            learner_sequence=2,
+            tutor_sequence=3,
+            learner_message_count=1,
+            max_learner_messages=30,
+        )
+
+        response = await harness.client.post(
+            f"/api/v1/conversations/{SESSION_ID}/messages",
+            json={"message": "Hello", "request_id": str(uuid4())},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["reply"] == "Recovered reply"
+    assert response.json()["usage"]["provider"] == "gemini"
+    harness.conversations.cache_generation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

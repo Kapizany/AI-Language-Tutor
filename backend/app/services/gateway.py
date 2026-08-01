@@ -4,11 +4,12 @@ import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
 from app.schemas.llm import LLMTask
-from app.services.providers.base import CompletionRequest, LLMProvider
+from app.services.providers.base import CompletionRequest, CompletionResult, LLMProvider
 from app.services.providers.common import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class LLMGateway:
         self.failure_threshold = failure_threshold
         self.recovery_seconds = recovery_seconds
         self.circuits = {name: CircuitState() for name in self.providers}
+        self.active_requests: dict[UUID, asyncio.Task[CompletionResult]] = {}
 
     def profile(self, task: LLMTask) -> TaskProfile:
         try:
@@ -114,6 +116,7 @@ class LLMGateway:
         system_prompt: str,
         user_prompt: str,
         output_model: type[OutputModel],
+        request_id: UUID | None = None,
     ) -> GatewayResult[OutputModel]:
         profile = self.profile(task)
         request = CompletionRequest(
@@ -130,7 +133,17 @@ class LLMGateway:
                 continue
             for attempt in range(self.max_retries + 1):
                 try:
-                    completion = await provider.complete(request)
+                    completion_task = asyncio.create_task(provider.complete(request))
+                    if request_id is not None:
+                        self.active_requests[request_id] = completion_task
+                    try:
+                        completion = await completion_task
+                    finally:
+                        if (
+                            request_id is not None
+                            and self.active_requests.get(request_id) is completion_task
+                        ):
+                            self.active_requests.pop(request_id, None)
                     try:
                         parsed = output_model.model_validate(parse_json_object(completion.content))
                     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
@@ -167,6 +180,16 @@ class LLMGateway:
                         break
         raise GatewayUnavailableError("; ".join(errors))
 
+    def cancel(self, request_id: UUID) -> bool:
+        task = self.active_requests.get(request_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
     async def close(self) -> None:
+        for task in self.active_requests.values():
+            task.cancel()
+        self.active_requests.clear()
         for provider in self.providers.values():
             await provider.close()

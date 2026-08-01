@@ -10,6 +10,7 @@ from app.api.routes import account, ai, conversation, health, speech
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.account import AccountService
+from app.services.auth import AuthUserVerifier
 from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.provider_factory import build_gateway
@@ -21,11 +22,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging()
     app.state.gateway = build_gateway(settings)
+    app.state.auth_user_verifier = AuthUserVerifier(settings)
     app.state.budget_service = BudgetService(settings)
     app.state.account_service = AccountService(settings)
     app.state.conversation_service = ConversationService(settings)
     app.state.transcription_service = TranscriptionService(settings)
     yield
+    await app.state.auth_user_verifier.close()
     await app.state.gateway.close()
     await app.state.budget_service.close()
     await app.state.account_service.close()

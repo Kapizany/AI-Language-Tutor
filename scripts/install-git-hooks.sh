@@ -7,7 +7,9 @@ cd "$project_root"
 chmod +x \
   .githooks/pre-commit \
   scripts/install-git-hooks.sh \
+  scripts/smoke-local.sh \
   scripts/test-database.sh \
+  scripts/validate-all.sh \
   scripts/validate-before-commit.sh
 git config --local core.hooksPath .githooks
 

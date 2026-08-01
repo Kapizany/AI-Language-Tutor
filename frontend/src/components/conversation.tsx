@@ -98,6 +98,7 @@ export function Conversation({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordingTimerRef = useRef<number | null>(null);
+  const pressingMicRef = useRef(false);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -294,12 +295,16 @@ export function Conversation({
 
   const cancelGeneration = () => abortRef.current?.abort();
 
-  const toggleDictation = async () => {
-    if (listening) {
-      mediaRecorderRef.current?.stop();
-      return;
-    }
+  const stopDictation = () => {
+    pressingMicRef.current = false;
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") recorder.stop();
+  };
+
+  const startDictation = async () => {
+    if (listening || transcribing || mediaRecorderRef.current) return;
     if (!voiceConsent) {
+      pressingMicRef.current = false;
       setShowVoiceConsent(true);
       setSpeechError("");
       return;
@@ -312,6 +317,10 @@ export function Conversation({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!pressingMicRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const preferredMimeType = [
         "audio/webm;codecs=opus",
         "audio/mp4",
@@ -326,6 +335,7 @@ export function Conversation({
         if (event.data.size) chunks.push(event.data);
       };
       recorder.onerror = () => {
+        pressingMicRef.current = false;
         setSpeechError("A gravação foi interrompida pelo navegador.");
         setListening(false);
       };
@@ -335,6 +345,7 @@ export function Conversation({
         stream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         mediaRecorderRef.current = null;
+        pressingMicRef.current = false;
         setListening(false);
         const audio = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
         if (audio.size < 100) {
@@ -366,7 +377,10 @@ export function Conversation({
       setListening(true);
       recorder.start(250);
       recordingTimerRef.current = window.setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
+        if (recorder.state === "recording") {
+          pressingMicRef.current = false;
+          recorder.stop();
+        }
       }, 20_000);
     } catch (error) {
       const permissionDenied = error instanceof DOMException
@@ -376,6 +390,7 @@ export function Conversation({
           ? "Autorize o microfone nas configurações deste site e tente novamente."
           : "Não foi possível acessar o microfone deste dispositivo.",
       );
+      pressingMicRef.current = false;
       setListening(false);
     }
   };
@@ -633,10 +648,38 @@ export function Conversation({
                   className={`mic-button${listening ? " listening" : ""}`}
                   type="button"
                   disabled={sending || ending || transcribing}
-                  title={listening ? "Parar e transcrever" : "Gravar para transcrever"}
-                  aria-label={listening ? "Parar e transcrever áudio" : "Gravar áudio para transcrever"}
+                  title="Pressione e segure para gravar"
+                  aria-label="Pressione e segure para gravar áudio; solte para transcrever"
                   aria-pressed={listening}
-                  onClick={() => void toggleDictation()}
+                  onPointerDown={(event) => {
+                    if (!event.isPrimary || event.button !== 0) return;
+                    event.preventDefault();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    pressingMicRef.current = true;
+                    void startDictation();
+                  }}
+                  onPointerUp={(event) => {
+                    event.preventDefault();
+                    stopDictation();
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                    }
+                  }}
+                  onPointerCancel={stopDictation}
+                  onKeyDown={(event) => {
+                    if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+                      event.preventDefault();
+                      pressingMicRef.current = true;
+                      void startDictation();
+                    }
+                  }}
+                  onKeyUp={(event) => {
+                    if (event.key === " " || event.key === "Enter") {
+                      event.preventDefault();
+                      stopDictation();
+                    }
+                  }}
+                  onContextMenu={(event) => event.preventDefault()}
                 >
                   <Mic2 />
                 </button>
@@ -681,7 +724,7 @@ export function Conversation({
                 </div>
               )}
               {speechError && <small className="voice-status voice-error" role="alert">{speechError}</small>}
-              {listening && <small className="voice-status" role="status">Gravando… toque novamente para transcrever (máximo de 20 segundos).</small>}
+              {listening && <small className="voice-status" role="status">Gravando… continue pressionando e solte para transcrever (máximo de 20 segundos).</small>}
               {transcribing && <small className="voice-status" role="status">Transcrevendo sua fala com segurança…</small>}
               <small>
                 Pressione Enter para enviar · Shift + Enter para nova linha ·{" "}

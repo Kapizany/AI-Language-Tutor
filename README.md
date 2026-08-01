@@ -23,22 +23,21 @@ The system supports multiple languages and interaction modes, including text, vo
 - 🎯 Adaptive difficulty based on learner performance
 - 📱 Cross-platform support through Web API and mobile-ready architecture
 
-## Technical Highlights
+## Current architecture
 
-The platform is designed using a modern AI architecture composed of specialized agents orchestrated through LangGraph.
+- Next.js, React and TypeScript frontend deployed to Cloudflare Pages
+- FastAPI backend packaged with Docker and deployed to Google Cloud Run
+- Supabase Auth, PostgreSQL, Row Level Security and versioned migrations
+- Provider-independent AI gateway with Gemini, DeepSeek and Kimi adapters
+- Gemini audio transcription through the authenticated backend
+- Learning content and learner progress persisted in PostgreSQL
+- Terraform for Cloudflare, Supabase and Google Cloud infrastructure
+- GitHub Actions for validation and deployment
+- Per-user and global usage controls with a US$10 monthly LLM ceiling
 
-Core components include:
-
-- Large Language Models (GPT, Qwen, Llama, Claude, etc.)
-- Whisper for speech-to-text
-- XTTS or ElevenLabs for natural voice synthesis
-- LangChain / LangGraph for workflow orchestration
-- Vector Database for long-term memory and semantic retrieval
-- FastAPI backend
-- PostgreSQL for structured data
-- Redis for caching
-- Docker for containerization
-- Optional cloud deployment on AWS
+LangGraph, semantic memory with `pgvector`, specialized agents and Redis remain
+optional future components. They will only be introduced when the product
+workflow and measured load justify the additional complexity.
 
 ## Intelligent Agents
 
@@ -55,18 +54,33 @@ The system is composed of multiple specialized AI agents, including:
 
 These agents collaborate to deliver contextual, personalized, and continuously improving learning sessions.
 
-## Future Roadmap
+## Delivery status and roadmap
 
-- Real-time multilingual voice conversations
-- Live translation mode
-- AI-generated study plans for proficiency exams (IELTS, TOEFL, DELE, CELI, JLPT, etc.)
-- Conversation with AI-generated historical or fictional characters
-- Community challenges and leaderboards
-- Teacher dashboard
-- Classroom mode
-- Mobile application
-- Offline learning mode
-- MCP integration with external educational tools
+Implemented foundations include authentication and persistent onboarding,
+learning-content catalogs, progress tracking, personalized review, textual
+conversations with history and summaries, recorded-audio transcription, secure
+account deletion, CI/CD and cost-controlled AI routing.
+
+The next planned phases are:
+
+1. **Plans and administration:** `Free` and `Premium` plans, protected
+   administrative roles, feature entitlements, usage/activity analytics,
+   account management and audited administrative actions.
+2. **Text-to-speech:** Google Cloud Standard TTS for words, phrases,
+   explanations and tutor messages. A provider-neutral `SpeechProvider`
+   interface will make Google replaceable without changing product features.
+3. **Corrections and spaced review:** structured feedback, recurring-error
+   tracking and an FSRS/SM-2-style review schedule.
+4. **Adaptive learning:** proficiency assessment, weekly study plans and
+   exercises derived from observed learner needs.
+5. **Advanced voice:** pronunciation feedback followed by real-time voice
+   conversations once latency, quality and cost are validated.
+6. **Production maturity:** E2E coverage, staging, observability, backups,
+   accessibility, privacy operations and a controlled private beta.
+
+Longer-term possibilities include exam-preparation modules, teacher and
+classroom dashboards, live translation, community challenges, native mobile and
+offline experiences, fictional or historical characters, and MCP integrations.
 
 ## Goal
 
@@ -76,9 +90,10 @@ The ultimate goal of AI Language Tutor is to build an AI-powered personal langua
 
 ```text
 .
-├── backend/          # FastAPI application (planned)
+├── backend/          # FastAPI API, AI gateway and conversation services
 ├── frontend/         # Next.js web application
-├── infra/terraform/  # Supabase and Cloudflare infrastructure
+├── infra/terraform/  # Cloudflare, Supabase and Google Cloud infrastructure
+├── supabase/         # Versioned database migrations
 └── docs/             # Product and screen documentation
 ```
 
@@ -160,3 +175,23 @@ terraform -chdir=infra/terraform apply
 
 Sensitive Terraform variables, plans, state files, and local provider data are
 ignored by Git.
+
+## Planned administration and speech architecture
+
+Administrative access will be authorized by the backend using protected roles;
+it will never trust a role supplied by the browser or writable user metadata.
+Plan entitlements and usage limits will be persisted and enforced server-side.
+The initial plans are `Free` and `Premium`; payment-provider fields will remain
+optional until billing is implemented.
+
+Speech synthesis will use Google Cloud Standard TTS behind a provider-neutral
+backend contract:
+
+```text
+Frontend → FastAPI SpeechService → SpeechProvider → GoogleStandardTTSProvider
+```
+
+The frontend will never receive Google credentials. Generated audio will be
+created on demand, cached by text/language/voice/rate/provider version, metered
+in characters, and constrained by the active plan. Future providers can be
+added as adapters without changing the API consumed by the frontend.

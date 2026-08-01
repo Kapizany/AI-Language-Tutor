@@ -8,6 +8,11 @@ AI Language Tutor:
 - optional Google Cloud APIs, Artifact Registry, Secret Manager, IAM, billing
   alerts, and a cost-constrained Cloud Run service for the FastAPI backend.
 
+The planned text-to-speech phase will also enable the Google Cloud
+Text-to-Speech API and grant the Cloud Run runtime service account only the
+permission needed to synthesize speech. Application code will initially select
+Google Standard TTS through a provider-neutral adapter.
+
 It intentionally does not provision an LLM account. Model providers are selected
 at application runtime and their API keys must be stored as deployment secrets.
 
@@ -101,3 +106,19 @@ The one-time bootstrap in `infra/bootstrap` creates the remote-state bucket,
 Artifact Registry, and GitHub OIDC identities. After that, GitHub Actions owns
 infrastructure applies and backend releases without static Google credentials.
 Detailed commands are in `.local/GOOGLE_CLOUD_TERRAFORM.md`.
+
+## Planned Text-to-Speech infrastructure
+
+The TTS rollout should be managed by Terraform where the Google provider
+supports it:
+
+- enable `texttospeech.googleapis.com`;
+- authorize the existing Cloud Run runtime service account with least
+  privilege;
+- expose non-secret provider and default-voice configuration to Cloud Run;
+- keep provider selection configurable, initially `google_standard`;
+- add quota/budget monitoring before enabling broad access.
+
+Application Default Credentials on Cloud Run must be used instead of creating a
+downloadable service-account key. Audio-cache storage will only be provisioned
+after its retention, access and deletion policy is defined.

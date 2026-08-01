@@ -39,6 +39,15 @@ Landing
   → Progresso
 ```
 
+Fluxo administrativo futuro:
+
+```text
+Login
+  → Verificação de role no backend
+  → Visão geral administrativa
+  → Usuários | Planos | Uso por feature | Saúde e auditoria
+```
+
 ## Telas
 
 | Rota conceitual | Objetivo | Padrão utilizado |
@@ -55,11 +64,38 @@ Landing
 | `/scenarios` | Escolher contexto de prática | Catálogo filtrável |
 | `/conversation` | Conversar e receber correções | Chat com feedback inline |
 | `/summary` | Consolidar sessão | Pontos fortes e melhorias |
+| `/learn/*` | Acessar leitura, gramática, exercícios e lições rápidas | Catálogo com retomada |
+| `/review` | Revisar erros observados em práticas e exercícios | Fila pessoal com atalhos |
 | `/vocabulary` | Revisar palavras salvas | Fila de repetição espaçada |
 | `/assessment` | Estimar nível | Avaliação em etapas |
 | `/progress` | Exibir evolução real | Métricas explicadas |
 | `/profile` | Ajustar preferências | Configurações agrupadas |
 | `/privacy` | Exportar e apagar dados | Controles transparentes |
+
+## Telas administrativas planejadas
+
+Essas telas serão renderizadas somente depois da autorização administrativa no
+backend. Ocultar links no frontend não é um controle de segurança.
+
+| Rota conceitual | Objetivo |
+|---|---|
+| `/admin` | Resumir usuários, atividade, uso, custo e saúde |
+| `/admin/users` | Buscar usuários, consultar consumo e administrar estado |
+| `/admin/plans` | Configurar `Free`, `Premium` e entitlements |
+| `/admin/features` | Comparar adoção, atividade, custo e falhas por feature |
+| `/admin/audit` | Consultar mutações administrativas rastreáveis |
+
+## Áudio planejado
+
+- Palavras, frases, exemplos, explicações e mensagens do tutor terão ação de
+  reprodução sob demanda.
+- O controle mostrará loading, reproduzir, pausar, repetir, velocidade normal e
+  lenta, além de falha recuperável.
+- Google Cloud Standard TTS será o primeiro provider, acessado apenas pelo
+  FastAPI.
+- Os componentes visuais consumirão um contrato neutro e não conhecerão detalhes
+  do provider.
+- Reprodução automática permanecerá desativada por padrão.
 
 ## Responsividade
 

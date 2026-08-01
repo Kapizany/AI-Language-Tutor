@@ -21,6 +21,8 @@ Endpoints:
 - `GET /api/v1/me`
 - `DELETE /api/v1/account`
 - `POST /api/v1/ai/tutor/reply`
+- `POST /api/v1/speech/transcribe`
+- conversation session, message, summary, hint, translation and history routes
 
 Run validation:
 
@@ -96,3 +98,46 @@ US$ 0.02 reserved per request
 
 Change database limits through `public.llm_budget_policies`, not from the
 frontend.
+
+## Planned plans and administrative API
+
+The next backend phase introduces protected `Free` and `Premium` plans,
+server-side feature entitlements, normalized feature-usage events and
+administrative analytics.
+
+Administrative authorization must be evaluated from a protected database role
+or trusted JWT claim. The API must never trust a role sent by the frontend or
+stored in user-editable metadata. The Supabase service-role key remains
+backend-only, every privileged action is authorized again in FastAPI, and
+administrative mutations are recorded in an audit log.
+
+The first administrator will be promoted explicitly by Supabase user UUID after
+normal account creation. There will be no public administrator signup.
+
+## Planned text-to-speech API
+
+Speech synthesis will use a provider-neutral Strategy/Adapter design:
+
+```text
+SpeechService
+└── SpeechProvider
+    ├── GoogleStandardTTSProvider  # initial provider
+    └── additional providers      # future adapters
+```
+
+The public contract will use generic fields such as text, BCP-47 language,
+voice, speaking rate and output format. Provider-specific SDK types must not
+escape the adapter.
+
+Initial operational rules:
+
+- Google Cloud Standard TTS is called only by the authenticated backend.
+- Cloud Run uses its runtime service account; no credential JSON is shipped.
+- Synthesis is on demand rather than automatic.
+- Reusable audio is cached by normalized request and provider version.
+- Text length, language, voice and output format are validated.
+- Usage is metered in characters and associated with user, feature and plan.
+- Rate limits, plan entitlements and global cost controls are enforced before
+  calling the provider.
+- Device `speechSynthesis` may be used only as an explicit availability
+  fallback, not as the primary production voice.

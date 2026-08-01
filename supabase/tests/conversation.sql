@@ -173,6 +173,23 @@ begin
     raise exception 'Conversation failure: correction_count was not updated';
   end if;
 
+  exchange := public.append_conversation_exchange(
+    active_session_id,
+    '30000000-0000-0000-0000-000000000001',
+    'I want one coffee',
+    'Sure! What size would you like?',
+    null,
+    '31111111-1111-4111-8111-111111111111'
+  );
+  if not (exchange ->> 'replayed')::boolean then
+    raise exception 'Conversation failure: duplicate request was not replayed';
+  end if;
+  if (
+    select message_count from public.conversation_sessions where id = active_session_id
+  ) <> 3 then
+    raise exception 'Conversation failure: duplicate request created messages';
+  end if;
+
   context := public.get_conversation_context(
     active_session_id, '30000000-0000-0000-0000-000000000001', 12
   );

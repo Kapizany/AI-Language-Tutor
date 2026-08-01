@@ -81,6 +81,25 @@ $$;
 do $$
 begin
   begin
+    insert into public.audit_events (actor_user_id, event_type)
+    values ('10000000-0000-0000-0000-000000000001', 'forged.event');
+    raise exception 'Authorization failure: client wrote an audit event';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform count(*) from public.audit_events;
+    raise exception 'Authorization failure: client read audit events';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$$;
+
+do $$
+begin
+  begin
     update public.learner_preferences
     set current_level = 'B2'
     where user_id = '10000000-0000-0000-0000-000000000002';
@@ -113,7 +132,10 @@ select public.save_learner_settings(
   'career',
   60,
   6,
-  true
+  true,
+  'grouped',
+  array['culture', 'technology'],
+  array['professional']
 );
 
 select public.save_learning_section_progress(
@@ -188,6 +210,31 @@ begin
     where id = '10000000-0000-0000-0000-000000000001'
   ) then
     raise exception 'Settings failure: onboarding was not completed';
+  end if;
+
+  if (
+    select correction_preference
+    from public.learner_preferences
+    where user_id = '10000000-0000-0000-0000-000000000001'
+  ) <> 'grouped' then
+    raise exception 'Settings failure: correction preference was not persisted';
+  end if;
+
+  if not (
+    select interests @> array['culture', 'technology']
+    from public.learner_preferences
+    where user_id = '10000000-0000-0000-0000-000000000001'
+  ) then
+    raise exception 'Settings failure: interests were not persisted';
+  end if;
+
+  if (
+    select count(*)
+    from public.audit_events
+    where actor_user_id = '10000000-0000-0000-0000-000000000001'
+      and event_type = 'onboarding.completed'
+  ) <> 1 then
+    raise exception 'Audit failure: onboarding completion was not recorded';
   end if;
 
   if (

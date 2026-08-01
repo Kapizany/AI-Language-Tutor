@@ -99,6 +99,37 @@ begin
   ) then
     raise exception 'Grammar catalog failure: every topic needs five exercises';
   end if;
+
+  if exists (
+    select 1
+    from public.quick_lessons
+    where level in ('B1', 'B2')
+      and (
+        jsonb_array_length(options) <> 4
+        or question in (
+          'What helped Maya reach the goal?',
+          'What helped Leo reach the goal?',
+          'What helped Nina reach the goal?',
+          'What helped Sam reach the goal?'
+        )
+      )
+  ) then
+    raise exception 'Advanced quick lesson failure: B1/B2 questions remain literal or trivial';
+  end if;
+
+  if exists (
+    select 1
+    from public.grammar_exercises
+    where level in ('B1', 'B2')
+      and question in (
+        'Choose the correct sentence.',
+        'Elige la frase correcta.',
+        'Choisissez la phrase correcte.',
+        'Scegli la frase corretta.'
+      )
+  ) then
+    raise exception 'Advanced grammar failure: B1/B2 exercises still use generic prompts';
+  end if;
 end;
 $$;
 

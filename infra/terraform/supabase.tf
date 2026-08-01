@@ -40,13 +40,15 @@ resource "supabase_settings" "backend" {
       var.additional_redirect_urls,
       ["${trimsuffix(var.site_url, "/")}/?auth=recovery"]
     )))
-    disable_signup                                    = false
-    enable_email_signup                               = true
-    enable_anonymous_sign_ins                         = false
-    mailer_autoconfirm                                = false
-    mailer_otp_exp                                    = 900
-    password_min_length                               = 12
-    password_required_characters                      = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{}"
+    disable_signup            = false
+    enable_email_signup       = true
+    enable_anonymous_sign_ins = false
+    mailer_autoconfirm        = false
+    mailer_otp_exp            = 900
+    password_min_length       = 12
+    # Supabase accepts only its predefined character-group options here.
+    # The frontend additionally requires a special character.
+    password_required_characters                      = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
     security_update_password_require_reauthentication = true
     security_refresh_token_rotation_enabled           = true
     security_refresh_token_reuse_interval             = 10

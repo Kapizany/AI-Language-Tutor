@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     gemini_output_usd_per_million: float = 1.50
 
     mercadopago_access_token: str = ""
+    mercadopago_public_key: str = ""
     mercadopago_webhook_secret: str = ""
     mercadopago_billing_enabled: bool = False
     mercadopago_mock_checkout: bool = False
@@ -113,6 +114,7 @@ class Settings(BaseSettings):
                 required.update(
                     {
                         "MERCADOPAGO_ACCESS_TOKEN": self.mercadopago_access_token,
+                        "MERCADOPAGO_PUBLIC_KEY": self.mercadopago_public_key,
                         "MERCADOPAGO_WEBHOOK_SECRET": self.mercadopago_webhook_secret,
                     }
                 )

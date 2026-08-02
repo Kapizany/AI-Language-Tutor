@@ -14,6 +14,7 @@ locals {
     DEEPSEEK_API_KEY           = "deepseek-api-key"
     SUPABASE_SERVICE_ROLE_KEY  = "supabase-service-role-key"
     MERCADOPAGO_ACCESS_TOKEN   = "mercadopago-access-token"
+    MERCADOPAGO_PUBLIC_KEY     = "mercadopago-public-key"
     MERCADOPAGO_WEBHOOK_SECRET = "mercadopago-webhook-secret"
   }
 

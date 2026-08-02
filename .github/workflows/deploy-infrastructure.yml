@@ -57,6 +57,7 @@ jobs:
       - name: Validate required configuration
         env:
           MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
+          MERCADOPAGO_PUBLIC_KEY: ${{ secrets.MERCADOPAGO_PUBLIC_KEY }}
           MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
         run: |
           test -n "$TF_VAR_google_project_id"
@@ -72,6 +73,7 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$SUPABASE_ACCESS_TOKEN"
           test -n "$MERCADOPAGO_ACCESS_TOKEN"
+          test -n "$MERCADOPAGO_PUBLIC_KEY"
           test -n "$MERCADOPAGO_WEBHOOK_SECRET"
 
       - name: Authenticate to Google Cloud
@@ -125,10 +127,13 @@ jobs:
       - name: Add Mercado Pago secret versions
         env:
           MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
+          MERCADOPAGO_PUBLIC_KEY: ${{ secrets.MERCADOPAGO_PUBLIC_KEY }}
           MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
         run: |
           printf '%s' "$MERCADOPAGO_ACCESS_TOKEN" |
             gcloud secrets versions add "mercadopago-access-token-${TF_VAR_environment}" --data-file=-
+          printf '%s' "$MERCADOPAGO_PUBLIC_KEY" |
+            gcloud secrets versions add "mercadopago-public-key-${TF_VAR_environment}" --data-file=-
           printf '%s' "$MERCADOPAGO_WEBHOOK_SECRET" |
             gcloud secrets versions add "mercadopago-webhook-secret-${TF_VAR_environment}" --data-file=-
 

@@ -46,7 +46,21 @@ def test_disabled_billing_does_not_block_production_startup() -> None:
     assert not settings.mercadopago_billing_enabled
 
 
-def test_enabled_billing_requires_both_mercadopago_secrets() -> None:
+def test_enabled_billing_requires_mercadopago_secrets() -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_PUBLIC_KEY"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+            gemini_api_key="gemini",
+            deepseek_api_key="deepseek",
+            mercadopago_billing_enabled=True,
+            mercadopago_access_token="access-token",
+            mercadopago_public_key="",
+            mercadopago_webhook_secret="webhook-secret",
+        )
+
     with pytest.raises(ValidationError, match="MERCADOPAGO_WEBHOOK_SECRET"):
         Settings(
             _env_file=None,
@@ -57,4 +71,6 @@ def test_enabled_billing_requires_both_mercadopago_secrets() -> None:
             deepseek_api_key="deepseek",
             mercadopago_billing_enabled=True,
             mercadopago_access_token="access-token",
+            mercadopago_public_key="TEST-public-key",
+            mercadopago_webhook_secret="",
         )

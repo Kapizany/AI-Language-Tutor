@@ -15,8 +15,14 @@ import {
 
 import { AppHeader } from "@/components/app-header";
 import { PlanComparison } from "@/components/plan-comparison";
+import { PremiumPaymentBrick } from "@/components/premium-payment-brick";
 import { Button } from "@/components/ui";
-import { startCheckout, type BillingCycle } from "@/lib/billing";
+import {
+  createCheckoutSession,
+  subscribeWithCardToken,
+  type BillingCycle,
+  type CheckoutSession,
+} from "@/lib/billing";
 import { ApiClientError } from "@/lib/api-client";
 import type { ScreenId } from "@/lib/learner";
 import {
@@ -32,6 +38,7 @@ type PricingScreenProps = {
   session: Session | null;
   displayName: string;
   go: (id: ScreenId) => void;
+  onSubscribed?: () => void | Promise<void>;
 };
 
 const FREE_HIGHLIGHTS = [
@@ -48,15 +55,28 @@ const PREMIUM_HIGHLIGHTS = [
   "Correções e tutor com muito mais folga",
 ] as const;
 
-export function PricingScreen({ session, displayName, go }: PricingScreenProps) {
+export function PricingScreen({
+  session,
+  displayName,
+  go,
+  onSubscribed,
+}: PricingScreenProps) {
   const [cycle, setCycle] = useState<BillingCycle>("annual");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [checkoutSession, setCheckoutSession] = useState<CheckoutSession | null>(null);
   const checkoutInFlight = useRef(false);
 
   const selectedPricing = PREMIUM_PRICING[cycle];
 
-  const subscribe = async () => {
+  const finishSubscription = async () => {
+    if (session?.access_token && onSubscribed) {
+      await onSubscribed();
+    }
+    go("billing-success");
+  };
+
+  const startEmbeddedCheckout = async () => {
     if (!session?.access_token) {
       go("login");
       return;
@@ -67,16 +87,27 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
     checkoutInFlight.current = true;
     setLoading(true);
     setError("");
+    setCheckoutSession(null);
     try {
-      const checkout = await startCheckout(session.access_token, cycle);
-      window.location.href = checkout.checkout_url;
+      const nextSession = await createCheckoutSession(session.access_token, cycle);
+      if (nextSession.mock_checkout) {
+        await subscribeWithCardToken(
+          session.access_token,
+          cycle,
+          "mock-card-token-local",
+        );
+        await finishSubscription();
+        return;
+      }
+      setCheckoutSession(nextSession);
     } catch (caught) {
-      checkoutInFlight.current = false;
       setError(
         caught instanceof ApiClientError
           ? caught.message
           : "Não foi possível iniciar o checkout agora.",
       );
+    } finally {
+      checkoutInFlight.current = false;
       setLoading(false);
     }
   };
@@ -108,7 +139,11 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
           role="tab"
           aria-selected={cycle === "monthly"}
           className={cycle === "monthly" ? "active" : ""}
-          onClick={() => setCycle("monthly")}
+          onClick={() => {
+            setCycle("monthly");
+            setCheckoutSession(null);
+            setError("");
+          }}
         >
           {PREMIUM_PRICING.monthly.label}
         </button>
@@ -117,7 +152,11 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
           role="tab"
           aria-selected={cycle === "annual"}
           className={cycle === "annual" ? "active" : ""}
-          onClick={() => setCycle("annual")}
+          onClick={() => {
+            setCycle("annual");
+            setCheckoutSession(null);
+            setError("");
+          }}
         >
           {PREMIUM_PRICING.annual.label}
           <span className="pricing-toggle-badge">{PREMIUM_PRICING.annual.savingsLabel}</span>
@@ -183,12 +222,26 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
               </strong>
               <small>
                 Cobrança real de {formatBrl(selectedPricing.amount)}. Renovação automática até
-                cancelar.
+                cancelar. Pagamento com cartão embutido no Lume.
               </small>
             </div>
-            <Button full onClick={() => void subscribe()} disabled={loading}>
-              {loading ? "Abrindo pagamento seguro..." : "Continuar para pagamento"}
-            </Button>
+
+            {!checkoutSession ? (
+              <Button full onClick={() => void startEmbeddedCheckout()} disabled={loading}>
+                {loading ? "Preparando pagamento..." : "Pagar com cartão"}
+              </Button>
+            ) : session?.access_token ? (
+              <PremiumPaymentBrick
+                key={`${checkoutSession.billing_cycle}-${checkoutSession.amount}`}
+                accessToken={session.access_token}
+                session={checkoutSession}
+                onSuccess={() => {
+                  void finishSubscription();
+                }}
+                onError={(message) => setError(message)}
+              />
+            ) : null}
+
             <ul className="pricing-trust-row">
               {CHECKOUT_TRUST_ITEMS.map((item) => (
                 <li key={item}>

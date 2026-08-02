@@ -161,52 +161,76 @@ async def test_billing_rpc_accepts_no_content_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_checkout_is_reused_instead_of_creating_duplicate() -> None:
+async def test_create_subscription_with_card_token_authorizes_preapproval() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(
         Settings(
             _env_file=None,
+            mercadopago_billing_enabled=True,
             mercadopago_access_token="APP_USR-production-token",
+            mercadopago_public_key="APP_USR-public-key",
             supabase_url="https://example.supabase.co",
             supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+            mercadopago_test_checkout=False,
         )
     )
     await service.db.aclose()
     await service.mp.aclose()
 
-    def db_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            request=request,
-            json=[
-                {
-                    "external_subscription_id": "preapproval-123",
-                    "billing_cycle": "annual",
-                    "status": "pending",
-                }
-            ],
-        )
+    rpc_calls: list[str] = []
 
-    mercado_pago_methods: list[str] = []
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/rpc/reserve_billing_checkout_attempt"):
+            rpc_calls.append("reserve")
+            return httpx.Response(200, request=request, json={"allowed": True})
+        if path.endswith("/rpc/create_billing_checkout"):
+            rpc_calls.append("create_checkout")
+            return httpx.Response(204, request=request)
+        if path.endswith("/rpc/process_billing_event"):
+            rpc_calls.append("process_event")
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "updated": True,
+                    "plan_id": "premium",
+                    "subscription_status": "active",
+                },
+            )
+        return httpx.Response(500, request=request, json={"error": path})
 
     def mp_handler(request: httpx.Request) -> httpx.Response:
-        mercado_pago_methods.append(request.method)
-        if request.method == "PUT":
+        if request.method == "POST" and request.url.path.endswith("/preapproval"):
             payload = json.loads(request.content)
+            assert payload["status"] == "authorized"
+            assert payload["card_token_id"] == "card-token-abc123"
+            assert payload["payer_email"] == "learner@example.test"
             assert payload["auto_recurring"]["transaction_amount"] == 5.0
-            return httpx.Response(200, request=request, json={"status": "pending"})
-        return httpx.Response(
-            200,
-            request=request,
-            json={
-                "id": "preapproval-123",
-                "status": "pending",
-                "init_point": "https://www.mercadopago.com.br/subscriptions/checkout",
-                "auto_recurring": {
-                    "transaction_amount": 1,
-                    "currency_id": "BRL",
+            return httpx.Response(
+                201,
+                request=request,
+                json={
+                    "id": "preapproval-999",
+                    "status": "authorized",
+                    "external_reference": f"{user_id}:monthly",
+                    "payer_id": 42,
                 },
-            },
-        )
+            )
+        if request.method == "GET" and "/preapproval/" in request.url.path:
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "preapproval-999",
+                    "status": "authorized",
+                    "external_reference": f"{user_id}:monthly",
+                    "payer_id": 42,
+                    "next_payment_date": None,
+                },
+            )
+        return httpx.Response(500, request=request, text=f"unexpected {request.url}")
 
     service.db = httpx.AsyncClient(
         base_url="https://example.supabase.co/rest/v1",
@@ -218,14 +242,98 @@ async def test_pending_checkout_is_reused_instead_of_creating_duplicate() -> Non
         transport=httpx.MockTransport(mp_handler),
     )
     try:
-        result = await service._load_reusable_checkout(
-            user_id=UUID("00000000-0000-0000-0000-000000000001"),
-            billing_cycle="annual",
+        result = await service.create_subscription_with_card_token(
+            user_id=user_id,
+            user_email="learner@example.test",
+            billing_cycle="monthly",
+            card_token_id="card-token-abc123",
         )
-        assert result == {
-            "checkout_url": "https://www.mercadopago.com.br/subscriptions/checkout",
-            "external_subscription_id": "preapproval-123",
-        }
-        assert mercado_pago_methods == ["GET", "PUT"]
+        assert result["plan_id"] == "premium"
+        assert result["external_subscription_id"] == "preapproval-999"
+        assert result["billing_cycle"] == "monthly"
+        assert rpc_calls == ["reserve", "create_checkout", "process_event"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_notification_resolves_authorized_payment_to_preapproval() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_access_token="APP_USR-production-token",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+        )
+    )
+    await service.db.aclose()
+    await service.mp.aclose()
+
+    mp_paths: list[str] = []
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/rpc/process_billing_event"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "updated": True,
+                    "plan_id": "premium",
+                    "subscription_status": "active",
+                },
+            )
+        return httpx.Response(500, request=request, json={"error": request.url.path})
+
+    def mp_handler(request: httpx.Request) -> httpx.Response:
+        mp_paths.append(request.url.path)
+        if request.url.path.endswith("/authorized_payments/7030522288"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": 7030522288,
+                    "preapproval_id": "preapproval-abc",
+                    "status": "processed",
+                },
+            )
+        if request.url.path.endswith("/preapproval/preapproval-abc"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "preapproval-abc",
+                    "status": "authorized",
+                    "external_reference": f"{user_id}:annual",
+                    "payer_id": 99,
+                    "next_payment_date": None,
+                },
+            )
+        return httpx.Response(404, request=request, text="missing")
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(mp_handler),
+    )
+    try:
+        result = await service.handle_notification(
+            resource_id="7030522288",
+            topic="subscription_authorized_payment",
+            payload={
+                "type": "subscription_authorized_payment",
+                "data": {"id": "7030522288"},
+                "live_mode": True,
+            },
+        )
+        assert result.get("plan_id") == "premium" or result.get("updated") is True
+        assert "/authorized_payments/7030522288" in mp_paths
+        assert "/preapproval/preapproval-abc" in mp_paths
+        assert "/preapproval/7030522288" not in mp_paths
     finally:
         await service.close()

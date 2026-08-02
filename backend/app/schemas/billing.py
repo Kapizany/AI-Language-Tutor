@@ -1,18 +1,35 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 BillingCycle = Literal["monthly", "annual"]
 
 
-class CheckoutRequest(BaseModel):
+class CheckoutSessionRequest(BaseModel):
     billing_cycle: BillingCycle
 
 
-class CheckoutResponse(BaseModel):
-    checkout_url: str
+class CheckoutSessionResponse(BaseModel):
+    public_key: str
+    amount: float
+    currency: str = "BRL"
+    billing_cycle: BillingCycle
+    reason: str
+    payer_email: str | None = None
+    mock_checkout: bool = False
+
+
+class SubscribeRequest(BaseModel):
+    billing_cycle: BillingCycle
+    card_token_id: str = Field(min_length=8, max_length=200)
+
+
+class SubscribeResponse(BaseModel):
+    plan_id: str
+    subscription_status: str
     external_subscription_id: str
+    billing_cycle: BillingCycle
 
 
 class BillingSubscriptionView(BaseModel):

@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 
@@ -9,8 +9,10 @@ from app.schemas.auth import AuthenticatedUser
 from app.schemas.billing import (
     BillingRefreshResponse,
     BillingSubscriptionView,
-    CheckoutRequest,
-    CheckoutResponse,
+    CheckoutSessionRequest,
+    CheckoutSessionResponse,
+    SubscribeRequest,
+    SubscribeResponse,
 )
 from app.services.billing import (
     AlreadyPremiumError,
@@ -25,39 +27,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 
-@router.post("/checkout", response_model=CheckoutResponse)
-async def create_checkout(
-    payload: CheckoutRequest,
-    billing: BillingDependency,
-    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-) -> CheckoutResponse:
-    try:
-        result = await billing.create_checkout(
-            user_id=user.id,
-            user_email=user.email,
-            billing_cycle=payload.billing_cycle,
-        )
-    except BillingNotConfiguredError as exc:
+def _raise_billing_http_error(
+    *,
+    exc: Exception,
+    operation: str,
+    billing_cycle: str,
+    unavailable_detail: str,
+    failure_detail: str,
+) -> NoReturn:
+    if isinstance(exc, BillingNotConfiguredError):
         logger.warning(
-            "Checkout unavailable because billing is not configured",
+            "Billing unavailable because it is not configured",
             extra={
-                "operation": "checkout_create",
+                "operation": operation,
                 "provider": "mercadopago",
-                "billing_cycle": payload.billing_cycle,
+                "billing_cycle": billing_cycle,
                 "reason": "billing_not_configured",
             },
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Pagamentos ainda não estão disponíveis.",
+            detail=unavailable_detail,
         ) from exc
-    except AlreadyPremiumError as exc:
+    if isinstance(exc, AlreadyPremiumError):
         logger.info(
-            "Checkout rejected for an existing Premium subscription",
+            "Billing rejected for an existing Premium subscription",
             extra={
-                "operation": "checkout_create",
+                "operation": operation,
                 "provider": "mercadopago",
-                "billing_cycle": payload.billing_cycle,
+                "billing_cycle": billing_cycle,
                 "reason": "already_premium",
             },
         )
@@ -65,13 +63,13 @@ async def create_checkout(
             status_code=status.HTTP_409_CONFLICT,
             detail="Você já possui uma assinatura Premium ativa.",
         ) from exc
-    except BillingRateLimitError as exc:
+    if isinstance(exc, BillingRateLimitError):
         logger.warning(
-            "Checkout rate limited",
+            "Billing rate limited",
             extra={
-                "operation": "checkout_create",
+                "operation": operation,
                 "provider": "supabase",
-                "billing_cycle": payload.billing_cycle,
+                "billing_cycle": billing_cycle,
                 "reason": "rate_limit",
             },
         )
@@ -91,34 +89,79 @@ async def create_checkout(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=detail,
         ) from exc
-    except BillingServiceError as exc:
+    if isinstance(exc, BillingServiceError):
         logger.exception(
-            "Checkout billing operation failed",
+            "Billing operation failed",
             extra={
-                "operation": "checkout_create",
+                "operation": operation,
                 "provider": "mercadopago",
-                "billing_cycle": payload.billing_cycle,
+                "billing_cycle": billing_cycle,
                 "error_type": type(exc).__name__,
             },
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Não foi possível iniciar o checkout agora.",
+            detail=failure_detail,
         ) from exc
+    logger.exception(
+        "Billing failed unexpectedly",
+        extra={
+            "operation": operation,
+            "billing_cycle": billing_cycle,
+            "error_type": type(exc).__name__,
+        },
+    )
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=failure_detail,
+    ) from exc
+
+
+@router.post("/checkout/session", response_model=CheckoutSessionResponse)
+async def create_checkout_session(
+    payload: CheckoutSessionRequest,
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CheckoutSessionResponse:
+    try:
+        result = await billing.create_checkout_session(
+            user_id=user.id,
+            user_email=user.email,
+            billing_cycle=payload.billing_cycle,
+        )
     except Exception as exc:
-        logger.exception(
-            "Checkout failed unexpectedly",
-            extra={
-                "operation": "checkout_create",
-                "billing_cycle": payload.billing_cycle,
-                "error_type": type(exc).__name__,
-            },
+        _raise_billing_http_error(
+            exc=exc,
+            operation="checkout_session",
+            billing_cycle=payload.billing_cycle,
+            unavailable_detail="Pagamentos ainda não estão disponíveis.",
+            failure_detail="Não foi possível preparar o checkout agora.",
         )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Não foi possível iniciar o checkout agora.",
-        ) from exc
-    return CheckoutResponse.model_validate(result)
+    return CheckoutSessionResponse.model_validate(result)
+
+
+@router.post("/subscribe", response_model=SubscribeResponse)
+async def subscribe_with_card_token(
+    payload: SubscribeRequest,
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> SubscribeResponse:
+    try:
+        result = await billing.create_subscription_with_card_token(
+            user_id=user.id,
+            user_email=user.email,
+            billing_cycle=payload.billing_cycle,
+            card_token_id=payload.card_token_id,
+        )
+    except Exception as exc:
+        _raise_billing_http_error(
+            exc=exc,
+            operation="subscribe_card_token",
+            billing_cycle=payload.billing_cycle,
+            unavailable_detail="Pagamentos ainda não estão disponíveis.",
+            failure_detail="Não foi possível concluir a assinatura agora.",
+        )
+    return SubscribeResponse.model_validate(result)
 
 
 @router.get("/subscription", response_model=BillingSubscriptionView)

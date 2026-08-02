@@ -2610,7 +2610,18 @@ export default function ProductPrototype() {
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
       case "profile": return <Profile key={`${preferences?.targetLanguage}-${preferences?.currentLevel}`} go={go} displayName={displayName} email={session?.user.email || ""} saveSettings={saveSettings} session={session}/>;
       case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
-      case "pricing": return <PricingScreen session={session} displayName={displayName} go={go}/>;
+      case "pricing": return (
+        <PricingScreen
+          session={session}
+          displayName={displayName}
+          go={go}
+          onSubscribed={
+            session?.access_token
+              ? () => refreshPlan(session.access_token)
+              : undefined
+          }
+        />
+      );
       case "billing-success": return <BillingResultScreen session={session} variant="success" go={(id) => { if (session?.access_token) void refreshPlan(session.access_token); go(id); }}/>;
       case "billing-cancel": return <BillingResultScreen session={session} variant="cancel" go={go}/>;
       case "admin": return session ? <AdminPanel session={session} go={go}/> : null;

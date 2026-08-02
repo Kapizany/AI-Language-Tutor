@@ -3,12 +3,11 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.api.dependencies import get_billing_service, get_entitlement_service
+from app.api.dependencies import get_billing_service
 from app.core.security import get_current_user
 from app.main import app
 from app.schemas.auth import AuthenticatedUser
 from app.services.billing import BillingService
-from app.services.entitlements import EntitlementService
 from tests.support import LEARNER_ID
 
 
@@ -30,7 +29,7 @@ async def test_billing_plans_are_public() -> None:
 
 
 @pytest.mark.asyncio
-async def test_checkout_requires_authentication() -> None:
+async def test_checkout_session_requires_authentication() -> None:
     billing = AsyncMock(spec=BillingService)
 
     async def configured_billing() -> BillingService:
@@ -42,7 +41,7 @@ async def test_checkout_requires_authentication() -> None:
         base_url="http://test",
     ) as client:
         response = await client.post(
-            "/api/v1/billing/checkout",
+            "/api/v1/billing/checkout/session",
             json={"billing_cycle": "monthly"},
         )
     app.dependency_overrides.clear()
@@ -50,36 +49,23 @@ async def test_checkout_requires_authentication() -> None:
 
 
 @pytest.mark.asyncio
-async def test_checkout_returns_mercado_pago_url() -> None:
+async def test_checkout_session_returns_public_key_and_amount() -> None:
     billing = AsyncMock(spec=BillingService)
-    billing.create_checkout.return_value = {
-        "checkout_url": "https://www.mercadopago.com.br/subscriptions/checkout?mock=1",
-        "external_subscription_id": "mock:123:monthly",
-    }
-
-    entitlements = AsyncMock(spec=EntitlementService)
-    entitlements.get_summary.return_value = {
-        "found": True,
-        "plan_id": "free",
-        "account_status": "active",
-        "max_learner_messages_per_session": 30,
-        "subscription_status": "active",
-        "subscription_ends_at": None,
-        "billing_cycle": None,
-        "subscription_source": "system",
-        "can_manage_billing": False,
-        "usage": {},
+    billing.create_checkout_session.return_value = {
+        "public_key": "TEST-public-key",
+        "amount": 5.0,
+        "currency": "BRL",
+        "billing_cycle": "annual",
+        "reason": "Lume Tutor Premium anual",
+        "payer_email": "learner@example.test",
+        "mock_checkout": False,
     }
 
     async def configured_billing() -> BillingService:
         return billing
 
-    async def configured_entitlements() -> EntitlementService:
-        return entitlements
-
     app.dependency_overrides[get_current_user] = learner_user
     app.dependency_overrides[get_billing_service] = configured_billing
-    app.dependency_overrides[get_entitlement_service] = configured_entitlements
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -87,15 +73,53 @@ async def test_checkout_returns_mercado_pago_url() -> None:
         headers={"Authorization": "Bearer token"},
     ) as client:
         response = await client.post(
-            "/api/v1/billing/checkout",
-            json={"billing_cycle": "monthly"},
+            "/api/v1/billing/checkout/session",
+            json={"billing_cycle": "annual"},
         )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["checkout_url"].startswith("https://")
-    billing.create_checkout.assert_awaited_once()
+    assert payload["public_key"] == "TEST-public-key"
+    assert payload["amount"] == 5.0
+    assert payload["mock_checkout"] is False
+    billing.create_checkout_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_activates_premium_with_card_token() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.create_subscription_with_card_token.return_value = {
+        "plan_id": "premium",
+        "subscription_status": "active",
+        "external_subscription_id": "preapproval-1",
+        "billing_cycle": "monthly",
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/subscribe",
+            json={
+                "billing_cycle": "monthly",
+                "card_token_id": "card-token-xyz",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["plan_id"] == "premium"
+    billing.create_subscription_with_card_token.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -45,14 +45,15 @@ The backend currently consumes these secret containers:
 - `deepseek-api-key-<environment>`;
 - `supabase-service-role-key-<environment>`;
 - `mercadopago-access-token-<environment>`;
+- `mercadopago-public-key-<environment>`;
 - `mercadopago-webhook-secret-<environment>`.
 
-The infrastructure workflow receives both Mercado Pago values from GitHub
+The infrastructure workflow receives Mercado Pago values from GitHub
 Environment secrets, adds Secret Manager versions outside Terraform state, and
-then deploys Cloud Run. Configure `MERCADOPAGO_ACCESS_TOKEN` and
-`MERCADOPAGO_WEBHOOK_SECRET` as GitHub Environment secrets, plus
-`BACKEND_PUBLIC_URL` as a GitHub Environment variable. Never use `TF_VAR_*` for
-the secret values.
+then deploys Cloud Run. Configure `MERCADOPAGO_ACCESS_TOKEN`,
+`MERCADOPAGO_PUBLIC_KEY`, and `MERCADOPAGO_WEBHOOK_SECRET` as GitHub
+Environment secrets, plus `BACKEND_PUBLIC_URL` as a GitHub Environment
+variable. Never use `TF_VAR_*` for the secret values.
 
 Cloud Run currently sets `MERCADOPAGO_TEST_CHECKOUT=false` because development
 is validating a real charge with production credentials. Set it to `true` only

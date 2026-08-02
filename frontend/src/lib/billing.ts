@@ -2,9 +2,21 @@ import { apiRequest } from "@/lib/api-client";
 
 export type BillingCycle = "monthly" | "annual";
 
-export type CheckoutResponse = {
-  checkout_url: string;
+export type CheckoutSession = {
+  public_key: string;
+  amount: number;
+  currency: string;
+  billing_cycle: BillingCycle;
+  reason: string;
+  payer_email: string | null;
+  mock_checkout: boolean;
+};
+
+export type SubscribeResponse = {
+  plan_id: string;
+  subscription_status: string;
   external_subscription_id: string;
+  billing_cycle: BillingCycle;
 };
 
 export type BillingSubscription = {
@@ -17,11 +29,29 @@ export type BillingSubscription = {
   manage_url: string | null;
 };
 
-export async function startCheckout(accessToken: string, billingCycle: BillingCycle) {
-  return apiRequest<CheckoutResponse>("/api/v1/billing/checkout", {
+export async function createCheckoutSession(
+  accessToken: string,
+  billingCycle: BillingCycle,
+) {
+  return apiRequest<CheckoutSession>("/api/v1/billing/checkout/session", {
     accessToken,
     method: "POST",
     body: { billing_cycle: billingCycle },
+  });
+}
+
+export async function subscribeWithCardToken(
+  accessToken: string,
+  billingCycle: BillingCycle,
+  cardTokenId: string,
+) {
+  return apiRequest<SubscribeResponse>("/api/v1/billing/subscribe", {
+    accessToken,
+    method: "POST",
+    body: {
+      billing_cycle: billingCycle,
+      card_token_id: cardTokenId,
+    },
   });
 }
 

@@ -2278,6 +2278,21 @@ export default function ProductPrototype() {
     return () => window.removeEventListener("popstate", restoreNavigation);
   }, [authLoading, onboardingCompleted, session]);
 
+  useEffect(() => {
+    if (!session?.access_token) return;
+    const refreshVisiblePlan = () => {
+      if (document.visibilityState === "visible") {
+        void refreshPlan(session.access_token);
+      }
+    };
+    window.addEventListener("focus", refreshVisiblePlan);
+    document.addEventListener("visibilitychange", refreshVisiblePlan);
+    return () => {
+      window.removeEventListener("focus", refreshVisiblePlan);
+      document.removeEventListener("visibilitychange", refreshVisiblePlan);
+    };
+  }, [refreshPlan, session?.access_token]);
+
   const navigate = (id: ScreenId, replace = false) => {
     setScreen(id);
     window.history[replace ? "replaceState" : "pushState"](null, "", `#/${id}`);

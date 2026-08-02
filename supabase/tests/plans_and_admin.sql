@@ -39,7 +39,10 @@ insert into public.user_roles (user_id, role)
 values ('20000000-0000-0000-0000-000000000002', 'admin');
 
 update public.user_subscriptions
-set plan_id = 'premium', status = 'active'
+set plan_id = 'premium',
+    status = 'active',
+    billing_cycle = 'annual',
+    subscription_source = 'mercadopago'
 where user_id = '20000000-0000-0000-0000-000000000003';
 
 -- RLS: users cannot escalate privileges
@@ -131,6 +134,36 @@ begin
   end if;
   if (summary #>> '{usage,transcriptions,limit}')::numeric <> 10 then
     raise exception 'Entitlement failure: free transcription limit mismatch';
+  end if;
+end;
+$$;
+
+-- Admin can inspect billing lifecycle without exposing it to regular users.
+do $$
+declare
+  summary jsonb;
+  users jsonb;
+begin
+  summary := public.admin_get_user_summary(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000003'
+  );
+  if summary ->> 'plan_id' <> 'premium'
+     or summary ->> 'billing_cycle' <> 'annual'
+     or summary ->> 'subscription_source' <> 'mercadopago'
+     or summary ->> 'subscription_status' <> 'active' then
+    raise exception 'Admin billing details failure: summary is incomplete';
+  end if;
+
+  users := public.admin_search_users(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000003',
+    20,
+    0
+  );
+  if users #>> '{0,billing_cycle}' <> 'annual'
+     or users #>> '{0,subscription_source}' <> 'mercadopago' then
+    raise exception 'Admin billing details failure: user list is incomplete';
   end if;
 end;
 $$;

@@ -46,6 +46,10 @@ class AdminUserListItem(BaseModel):
     account_status: str
     onboarding_completed: bool
     plan_id: str
+    subscription_status: str = "active"
+    subscription_ends_at: datetime | None = None
+    billing_cycle: str | None = None
+    subscription_source: str = "system"
     created_at: datetime
 
 
@@ -60,6 +64,9 @@ class AdminUserSummary(BaseModel):
     onboarding_completed: bool | None = None
     plan_id: str | None = None
     subscription_status: str | None = None
+    subscription_ends_at: datetime | None = None
+    billing_cycle: str | None = None
+    subscription_source: str | None = None
     is_admin: bool = False
     created_at: datetime | None = None
     target_language: str | None = None

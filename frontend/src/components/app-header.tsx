@@ -90,12 +90,18 @@ export function AppHeader({
         {subtitle && <p>{subtitle}</p>}
       </div>
       <div className="app-header-tools">
-        {learner && learner.planId !== "premium" && (
+        {learner && (
           <button
             type="button"
-            className="plan-badge"
-            onClick={() => learner.goToPricing()}
-            title="Ver plano Premium"
+            className={`plan-badge${learner.planId === "premium" ? " is-premium" : ""}`}
+            onClick={() =>
+              learner.planId === "premium" ? openProfile() : learner.goToPricing()
+            }
+            title={
+              learner.planId === "premium"
+                ? "Plano Premium ativo"
+                : "Ver plano Premium"
+            }
           >
             <Crown size={14} aria-hidden="true" />
             {planLabel(learner.planId)}

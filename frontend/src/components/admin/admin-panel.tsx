@@ -38,6 +38,32 @@ type AdminPanelProps = {
   go: (id: ScreenId) => void;
 };
 
+const subscriptionStatusLabel = (status: string) => {
+  if (status === "active") return "Ativa";
+  if (status === "trialing") return "Em teste";
+  if (status === "canceled") return "Cancelada";
+  if (status === "suspended") return "Suspensa";
+  return status;
+};
+
+const billingCycleLabel = (cycle: "monthly" | "annual" | null) => {
+  if (cycle === "monthly") return "Mensal";
+  if (cycle === "annual") return "Anual";
+  return "Sem ciclo";
+};
+
+const subscriptionEndLabel = (
+  status: string,
+  endsAt: string | null,
+) => {
+  if (endsAt) {
+    return new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "medium",
+    }).format(new Date(endsAt));
+  }
+  return status === "active" ? "Renovação automática" : "Sem data informada";
+};
+
 function StatCard({
   label,
   value,
@@ -301,7 +327,10 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
                     <button type="button" onClick={() => void openUser(user.user_id)}>
                       <strong>{user.display_name || "Sem nome"}</strong>
                       <span>{user.email_masked}</span>
-                      <small>{planLabel(user.plan_id)} · {user.account_status}</small>
+                      <small>
+                        {planLabel(user.plan_id)} · {billingCycleLabel(user.billing_cycle)}
+                        {" · "}{subscriptionStatusLabel(user.subscription_status)}
+                      </small>
                     </button>
                   </li>
                 ))}
@@ -317,6 +346,33 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
                 <p>{selectedUser.email_masked}</p>
                 <ul className="admin-meta">
                   <li><span>Plano</span><strong>{planLabel(selectedUser.plan_id)}</strong></li>
+                  <li>
+                    <span>Ciclo</span>
+                    <strong>{billingCycleLabel(selectedUser.billing_cycle)}</strong>
+                  </li>
+                  <li>
+                    <span>Assinatura</span>
+                    <strong>{subscriptionStatusLabel(selectedUser.subscription_status)}</strong>
+                  </li>
+                  <li>
+                    <span>Término</span>
+                    <strong>
+                      {subscriptionEndLabel(
+                        selectedUser.subscription_status,
+                        selectedUser.subscription_ends_at,
+                      )}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>Origem</span>
+                    <strong>
+                      {selectedUser.subscription_source === "mercadopago"
+                        ? "Mercado Pago"
+                        : selectedUser.subscription_source === "admin"
+                          ? "Administrador"
+                          : "Sistema"}
+                    </strong>
+                  </li>
                   <li><span>Status</span><strong>{selectedUser.account_status}</strong></li>
                   <li><span>Admin</span><strong>{selectedUser.is_admin ? "Sim" : "Não"}</strong></li>
                   <li><span>Conversas</span><strong>{selectedUser.conversation_sessions}</strong></li>

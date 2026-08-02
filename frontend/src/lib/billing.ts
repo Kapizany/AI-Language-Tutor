@@ -22,7 +22,9 @@ export type SubscribeResponse = {
 export type BillingSubscription = {
   plan_id: string;
   subscription_status: string;
+  subscription_started_at: string | null;
   subscription_ends_at: string | null;
+  subscription_renews_at: string | null;
   billing_cycle: BillingCycle | null;
   subscription_source: string;
   can_manage_billing: boolean;
@@ -69,4 +71,15 @@ export async function refreshBillingSubscription(accessToken: string) {
 
 export async function loadBillingSubscription(accessToken: string) {
   return apiRequest<BillingSubscription>("/api/v1/billing/subscription", { accessToken });
+}
+
+export async function cancelBillingSubscription(accessToken: string) {
+  return apiRequest<{
+    subscription_status: string;
+    subscription_ends_at: string | null;
+    external_subscription_id: string;
+  }>("/api/v1/billing/subscription/cancel", {
+    accessToken,
+    method: "POST",
+  });
 }

@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -57,6 +57,14 @@ class BillingProviderError(BillingServiceError):
         super().__init__(message)
         self.status_code = status_code
         self.request_id = request_id
+
+
+class BillingSubscriptionNotFoundError(BillingServiceError):
+    pass
+
+
+class BillingSubscriptionNotCancelableError(BillingServiceError):
+    pass
 
 
 class BillingSellerIsBuyerError(BillingServiceError):
@@ -202,10 +210,6 @@ class BillingService:
         parts = urlsplit(raw)
         path = parts.path or "/"
         return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
-
-    @staticmethod
-    def _subscription_start_date() -> str:
-        return (datetime.now(UTC) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     async def _collector_email(self) -> str | None:
         try:
@@ -428,7 +432,6 @@ class BillingService:
                 "frequency_type": pricing["frequency_type"],
                 "transaction_amount": pricing["amount"],
                 "currency_id": "BRL",
-                "start_date": self._subscription_start_date(),
             },
             "back_url": back_url,
             "status": "authorized",
@@ -548,6 +551,91 @@ class BillingService:
             "subscription_status": str(result.get("subscription_status") or "active"),
             "external_subscription_id": preapproval_id,
             "billing_cycle": billing_cycle,
+        }
+
+    async def _load_user_subscription(self, user_id: UUID) -> dict[str, Any] | None:
+        try:
+            response = await self.db.get(
+                "/user_subscriptions",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": (
+                        "plan_id,status,started_at,ends_at,renews_at,billing_cycle,"
+                        "subscription_source,external_subscription_id"
+                    ),
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not load billing subscription") from exc
+        if response.status_code >= 400:
+            raise BillingServiceError("Could not load billing subscription")
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise BillingServiceError("Could not parse billing subscription") from exc
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return None
+        return rows[0]
+
+    async def cancel_subscription(self, *, user_id: UUID) -> dict[str, Any]:
+        if not self.enabled:
+            raise BillingNotConfiguredError("Mercado Pago billing is not configured")
+
+        subscription = await self._load_user_subscription(user_id)
+        if not subscription:
+            raise BillingSubscriptionNotFoundError("Subscription was not found")
+        if subscription.get("subscription_source") != "mercadopago":
+            raise BillingSubscriptionNotCancelableError(
+                "Only Mercado Pago subscriptions can be canceled by the user"
+            )
+
+        preapproval_id = str(subscription.get("external_subscription_id") or "").strip()
+        if not preapproval_id:
+            raise BillingSubscriptionNotFoundError("External subscription was not found")
+
+        if str(subscription.get("status") or "").lower() == "canceled":
+            return {
+                "subscription_status": "canceled",
+                "subscription_ends_at": subscription.get("ends_at"),
+                "external_subscription_id": preapproval_id,
+            }
+
+        current = await self.fetch_preapproval(preapproval_id)
+        owner_id, _ = self._parse_external_reference(
+            str(current.get("external_reference") or ""),
+            fallback_user_id=None,
+        )
+        if owner_id != user_id:
+            raise BillingSubscriptionNotCancelableError(
+                "Subscription does not belong to the authenticated user"
+            )
+        grace_end = self._parse_provider_datetime(current.get("next_payment_date"))
+
+        try:
+            response = await self.mp.put(
+                f"/preapproval/{preapproval_id}",
+                json={"status": "cancelled"},
+            )
+        except httpx.HTTPError as exc:
+            raise BillingProviderError("Mercado Pago cancellation transport failed") from exc
+
+        if response.status_code >= 400:
+            raise BillingProviderError(
+                "Mercado Pago subscription cancellation failed",
+                status_code=response.status_code,
+                request_id=response.headers.get("x-request-id"),
+            )
+
+        result = await self.sync_preapproval(
+            preapproval_id=preapproval_id,
+            fallback_user_id=user_id,
+            fallback_ends_at=grace_end,
+        )
+        return {
+            "subscription_status": str(result.get("subscription_status") or "canceled"),
+            "subscription_ends_at": result.get("ends_at"),
+            "external_subscription_id": preapproval_id,
         }
 
     async def _assert_can_start_checkout(self, *, user_id: UUID) -> None:
@@ -798,6 +886,7 @@ class BillingService:
         preapproval_id: str,
         billing_cycle: str | None = None,
         fallback_user_id: UUID | None = None,
+        fallback_ends_at: datetime | None = None,
     ) -> dict[str, Any]:
         if not self.webhooks_ready:
             return {"processed": False, "reason": "billing_not_configured"}
@@ -808,15 +897,28 @@ class BillingService:
             fallback_user_id=fallback_user_id,
         )
         resolved_cycle = billing_cycle or parsed_cycle
-        ends_at = self._resolve_grace_end(preapproval)
+        ends_at = self._resolve_grace_end(preapproval) or fallback_ends_at
+        if ends_at is None and str(preapproval.get("status") or "").lower() in {
+            "cancelled",
+            "canceled",
+            "paused",
+        }:
+            ends_at = datetime.now(tz=UTC)
         payer_id = preapproval.get("payer_id")
 
-        event_key = f"{preapproval_id}:{preapproval.get('status')}:{ends_at}"
+        event_version = (
+            preapproval.get("last_modified")
+            or preapproval.get("next_payment_date")
+            or ends_at
+            or preapproval.get("date_created")
+        )
+        event_key = f"{preapproval_id}:{preapproval.get('status')}:{event_version}"
         event_payload = {
             "preapproval_id": preapproval_id,
             "status": str(preapproval.get("status") or ""),
             "date_created": preapproval.get("date_created"),
             "last_modified": preapproval.get("last_modified"),
+            "next_payment_date": preapproval.get("next_payment_date"),
         }
         result = await self._rpc(
             "process_billing_event",
@@ -954,21 +1056,20 @@ class BillingService:
         raise BillingServiceError("Could not resolve billing user from external reference")
 
     @staticmethod
-    def _resolve_grace_end(preapproval: dict[str, Any]) -> datetime | None:
+    def _parse_provider_datetime(raw: object) -> datetime | None:
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
+    @classmethod
+    def _resolve_grace_end(cls, preapproval: dict[str, Any]) -> datetime | None:
         status = str(preapproval.get("status") or "").lower()
         if status not in {"cancelled", "canceled", "paused"}:
             return None
-
-        for key in ("next_payment_date",):
-            raw = preapproval.get(key)
-            if not raw:
-                continue
-            try:
-                parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            return parsed
-
-        return datetime.now(tz=UTC)
+        return cls._parse_provider_datetime(preapproval.get("next_payment_date"))

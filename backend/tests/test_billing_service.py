@@ -329,7 +329,8 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
             assert payload["card_token_id"] == "card-token-abc123"
             assert payload["payer_email"] == "learner@example.test"
             assert payload["auto_recurring"]["transaction_amount"] == 5.0
-            assert "start_date" in payload["auto_recurring"]
+            assert "start_date" not in payload["auto_recurring"]
+            assert "end_date" not in payload["auto_recurring"]
             assert "#" not in payload["back_url"]
             return httpx.Response(
                 201,
@@ -387,6 +388,96 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
             billing_cycle="monthly",
             card_token_id="different-card-token",
         )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_subscription_keeps_access_until_next_payment_date() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_billing_enabled=True,
+            mercadopago_access_token="APP_USR-production-token",
+            mercadopago_public_key="APP_USR-public-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.mp.aclose()
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/user_subscriptions"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "plan_id": "premium",
+                        "status": "active",
+                        "started_at": "2026-08-02T12:00:00Z",
+                        "ends_at": None,
+                        "renews_at": "2026-09-02T12:00:00Z",
+                        "billing_cycle": "monthly",
+                        "subscription_source": "mercadopago",
+                        "external_subscription_id": "preapproval-999",
+                    }
+                ],
+            )
+        if request.url.path.endswith("/rpc/process_billing_event"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "updated": True,
+                    "plan_id": "premium",
+                    "subscription_status": "canceled",
+                    "ends_at": "2026-09-02T12:00:00+00:00",
+                },
+            )
+        return httpx.Response(500, request=request)
+
+    preapproval_gets = 0
+
+    def mp_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal preapproval_gets
+        if request.method == "GET" and request.url.path.endswith("/preapproval/preapproval-999"):
+            preapproval_gets += 1
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "preapproval-999",
+                    "status": "active" if preapproval_gets == 1 else "cancelled",
+                    "external_reference": f"{user_id}:monthly",
+                    "payer_id": 42,
+                    "date_created": "2026-08-02T12:00:00Z",
+                    "next_payment_date": (
+                        "2026-09-02T12:00:00Z" if preapproval_gets == 1 else None
+                    ),
+                },
+            )
+        if request.method == "PUT" and request.url.path.endswith("/preapproval/preapproval-999"):
+            assert json.loads(request.content) == {"status": "cancelled"}
+            return httpx.Response(200, request=request, json={"status": "cancelled"})
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(mp_handler),
+    )
+    try:
+        result = await service.cancel_subscription(user_id=user_id)
+        assert result["subscription_status"] == "canceled"
+        assert result["subscription_ends_at"] == "2026-09-02T12:00:00+00:00"
+        assert preapproval_gets == 2
     finally:
         await service.close()
 

@@ -16,7 +16,9 @@ class EntitlementsSummary(BaseModel):
     account_status: str
     max_learner_messages_per_session: int
     subscription_status: str = "active"
+    subscription_started_at: datetime | None = None
     subscription_ends_at: datetime | None = None
+    subscription_renews_at: datetime | None = None
     billing_cycle: str | None = None
     subscription_source: str = "system"
     can_manage_billing: bool = False
@@ -47,7 +49,9 @@ class AdminUserListItem(BaseModel):
     onboarding_completed: bool
     plan_id: str
     subscription_status: str = "active"
+    subscription_started_at: datetime | None = None
     subscription_ends_at: datetime | None = None
+    subscription_renews_at: datetime | None = None
     billing_cycle: str | None = None
     subscription_source: str = "system"
     created_at: datetime
@@ -64,7 +68,9 @@ class AdminUserSummary(BaseModel):
     onboarding_completed: bool | None = None
     plan_id: str | None = None
     subscription_status: str | None = None
+    subscription_started_at: datetime | None = None
     subscription_ends_at: datetime | None = None
+    subscription_renews_at: datetime | None = None
     billing_cycle: str | None = None
     subscription_source: str | None = None
     is_admin: bool = False

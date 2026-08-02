@@ -68,6 +68,7 @@ import { PlanComparison } from "@/components/plan-comparison";
 import { PricingScreen } from "@/components/pricing-screen";
 import { BillingResultScreen } from "@/components/billing-result-screen";
 import { loadIsAdmin } from "@/lib/admin";
+import { cancelBillingSubscription } from "@/lib/billing";
 import {
   goalLabels,
   languageDetails,
@@ -1044,6 +1045,7 @@ function Profile({
   const [entitlements, setEntitlements] = useState<EntitlementsSummary | null>(null);
   const [entitlementsLoading, setEntitlementsLoading] = useState(false);
   const [entitlementsError, setEntitlementsError] = useState("");
+  const [cancelingSubscription, setCancelingSubscription] = useState(false);
 
   const resolvedLanguageLevels = studiedLanguages.map((entry) => ({
     ...entry,
@@ -1073,6 +1075,25 @@ function Profile({
     void load();
     return () => { active = false; };
   }, [section, session?.access_token]);
+
+  const cancelSubscription = async () => {
+    if (!session?.access_token || cancelingSubscription) return;
+    if (!window.confirm("Cancelar a renovação automática da assinatura Premium?")) return;
+
+    setCancelingSubscription(true);
+    setEntitlementsError("");
+    try {
+      await cancelBillingSubscription(session.access_token);
+      setEntitlements(await loadEntitlements(session.access_token));
+      setFeedback({
+        success: "Assinatura cancelada. Seu acesso continua até o fim do período pago.",
+      });
+    } catch {
+      setEntitlementsError("Não foi possível cancelar a assinatura agora.");
+    } finally {
+      setCancelingSubscription(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -1200,14 +1221,54 @@ function Profile({
                 Seu Premium permanece ativo até {new Date(entitlements.subscription_ends_at).toLocaleDateString("pt-BR")}.
               </p>
             )}
-            {!entitlementsLoading && entitlements?.can_manage_billing && (
-              <p className="usage-note">
-                Gerencie ou cancele sua assinatura no{" "}
+            {!entitlementsLoading && entitlements?.plan_id === "premium" && (
+              <div className="billing-lifecycle">
+                <p>
+                  <strong>Assinatura:</strong>{" "}
+                  {entitlements.subscription_status === "canceled" ? "Cancelada" : "Ativa"}
+                  {" · "}
+                  {entitlements.billing_cycle === "annual"
+                    ? "Anual"
+                    : entitlements.billing_cycle === "monthly"
+                      ? "Mensal"
+                      : "Ciclo não informado"}
+                </p>
+                <p>
+                  <strong>Início:</strong>{" "}
+                  {entitlements.subscription_started_at
+                    ? new Date(entitlements.subscription_started_at).toLocaleDateString("pt-BR")
+                    : "não informado"}
+                </p>
+                <p>
+                  <strong>
+                    {entitlements.subscription_ends_at ? "Término:" : "Próxima renovação:"}
+                  </strong>{" "}
+                  {entitlements.subscription_ends_at
+                    ? new Date(entitlements.subscription_ends_at).toLocaleDateString("pt-BR")
+                    : entitlements.subscription_renews_at
+                      ? new Date(entitlements.subscription_renews_at).toLocaleDateString("pt-BR")
+                      : "aguardando confirmação"}
+                </p>
+              </div>
+            )}
+            {!entitlementsLoading
+              && entitlements?.plan_id === "premium"
+              && entitlements.can_manage_billing && (
+              <div className="billing-management">
+                {entitlements.subscription_status !== "canceled" && (
+                  <Button
+                    variant="danger"
+                    disabled={cancelingSubscription}
+                    onClick={() => void cancelSubscription()}
+                  >
+                    {cancelingSubscription ? "Cancelando..." : "Cancelar assinatura"}
+                  </Button>
+                )}
                 <a href="https://www.mercadopago.com.br/subscriptions" target="_blank" rel="noreferrer">
-                  Mercado Pago
+                  Abrir no Mercado Pago
                 </a>
-                . O acesso continua até o fim do período pago.
-              </p>
+                <p className="usage-note">O acesso continua até o fim do período pago.</p>
+              </div>
             )}
             {entitlements && !entitlementsLoading && entitlements.plan_id === "free" && (
               <PlanComparison variant="compact" currentPlan="free" highlightColumn="premium" />

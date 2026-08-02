@@ -52,17 +52,10 @@ const billingCycleLabel = (cycle: "monthly" | "annual" | null) => {
   return "Sem ciclo";
 };
 
-const subscriptionEndLabel = (
-  status: string,
-  endsAt: string | null,
-) => {
-  if (endsAt) {
-    return new Intl.DateTimeFormat("pt-BR", {
-      dateStyle: "medium",
-    }).format(new Date(endsAt));
-  }
-  return status === "active" ? "Renovação automática" : "Sem data informada";
-};
+const subscriptionDateLabel = (value: string | null, fallback: string) =>
+  value
+    ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(new Date(value))
+    : fallback;
 
 function StatCard({
   label,
@@ -355,11 +348,31 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
                     <strong>{subscriptionStatusLabel(selectedUser.subscription_status)}</strong>
                   </li>
                   <li>
+                    <span>Início</span>
+                    <strong>
+                      {subscriptionDateLabel(
+                        selectedUser.subscription_started_at,
+                        "Sem data informada",
+                      )}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>Próxima renovação</span>
+                    <strong>
+                      {subscriptionDateLabel(
+                        selectedUser.subscription_renews_at,
+                        "Não agendada",
+                      )}
+                    </strong>
+                  </li>
+                  <li>
                     <span>Término</span>
                     <strong>
-                      {subscriptionEndLabel(
-                        selectedUser.subscription_status,
+                      {subscriptionDateLabel(
                         selectedUser.subscription_ends_at,
+                        selectedUser.subscription_status === "active"
+                          ? "Sem término"
+                          : "Sem data informada",
                       )}
                     </strong>
                   </li>

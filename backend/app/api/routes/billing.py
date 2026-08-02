@@ -9,6 +9,7 @@ from app.schemas.auth import AuthenticatedUser
 from app.schemas.billing import (
     BillingRefreshResponse,
     BillingSubscriptionView,
+    CancelSubscriptionResponse,
     CheckoutSessionRequest,
     CheckoutSessionResponse,
     SubscribeRequest,
@@ -22,6 +23,8 @@ from app.services.billing import (
     BillingRateLimitError,
     BillingSellerIsBuyerError,
     BillingServiceError,
+    BillingSubscriptionNotCancelableError,
+    BillingSubscriptionNotFoundError,
     parse_mercadopago_webhook_payload,
 )
 
@@ -99,6 +102,16 @@ def _raise_billing_http_error(
                 "Não é possível assinar com o mesmo e-mail da conta vendedora do Mercado Pago. "
                 "Entre com outra conta Lume (e-mail de comprador) e tente novamente."
             ),
+        ) from exc
+    if isinstance(exc, BillingSubscriptionNotFoundError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assinatura não encontrada.",
+        ) from exc
+    if isinstance(exc, BillingSubscriptionNotCancelableError):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta assinatura não pode ser cancelada por este usuário.",
         ) from exc
     if isinstance(exc, BillingRateLimitError):
         logger.warning(
@@ -229,6 +242,24 @@ async def subscribe_with_card_token(
     return SubscribeResponse.model_validate(result)
 
 
+@router.post("/subscription/cancel", response_model=CancelSubscriptionResponse)
+async def cancel_subscription(
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CancelSubscriptionResponse:
+    try:
+        result = await billing.cancel_subscription(user_id=user.id)
+    except Exception as exc:
+        _raise_billing_http_error(
+            exc=exc,
+            operation="subscription_cancel",
+            billing_cycle="current",
+            unavailable_detail="O cancelamento não está disponível agora.",
+            failure_detail="Não foi possível cancelar a assinatura agora.",
+        )
+    return CancelSubscriptionResponse.model_validate(result)
+
+
 @router.get("/subscription", response_model=BillingSubscriptionView)
 async def subscription_status(
     entitlements: EntitlementDependency,
@@ -242,7 +273,9 @@ async def subscription_status(
     return BillingSubscriptionView(
         plan_id=str(summary.get("plan_id") or "free"),
         subscription_status=str(summary.get("subscription_status") or "active"),
+        subscription_started_at=summary.get("subscription_started_at"),
         subscription_ends_at=summary.get("subscription_ends_at"),
+        subscription_renews_at=summary.get("subscription_renews_at"),
         billing_cycle=summary.get("billing_cycle"),
         subscription_source=str(summary.get("subscription_source") or "system"),
         can_manage_billing=can_manage,

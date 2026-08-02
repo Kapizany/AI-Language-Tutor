@@ -158,6 +158,34 @@ async def test_subscribe_returns_provider_support_code_without_blame_message() -
 
 
 @pytest.mark.asyncio
+async def test_user_can_cancel_mercado_pago_subscription() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.cancel_subscription.return_value = {
+        "subscription_status": "canceled",
+        "subscription_ends_at": "2026-09-02T12:00:00Z",
+        "external_subscription_id": "preapproval-1",
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post("/api/v1/billing/subscription/cancel")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["subscription_status"] == "canceled"
+    assert response.json()["subscription_ends_at"] == "2026-09-02T12:00:00Z"
+    billing.cancel_subscription.assert_awaited_once_with(user_id=LEARNER_ID)
+
+
+@pytest.mark.asyncio
 async def test_webhook_rejects_invalid_signature() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.verify_webhook_signature.return_value = False

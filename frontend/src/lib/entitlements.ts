@@ -10,7 +10,9 @@ export type EntitlementsSummary = {
   account_status: string;
   max_learner_messages_per_session: number;
   subscription_status: string;
+  subscription_started_at: string | null;
   subscription_ends_at: string | null;
+  subscription_renews_at: string | null;
   billing_cycle: "monthly" | "annual" | null;
   subscription_source: string;
   can_manage_billing: boolean;

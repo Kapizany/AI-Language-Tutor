@@ -32,10 +32,18 @@ class SubscribeResponse(BaseModel):
     billing_cycle: BillingCycle
 
 
+class CancelSubscriptionResponse(BaseModel):
+    subscription_status: str
+    subscription_ends_at: datetime | None = None
+    external_subscription_id: str
+
+
 class BillingSubscriptionView(BaseModel):
     plan_id: str
     subscription_status: str
+    subscription_started_at: datetime | None = None
     subscription_ends_at: datetime | None = None
+    subscription_renews_at: datetime | None = None
     billing_cycle: str | None = None
     subscription_source: str = "system"
     can_manage_billing: bool = False

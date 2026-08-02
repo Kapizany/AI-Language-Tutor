@@ -39,7 +39,9 @@ export type AdminUserListItem = {
   onboarding_completed: boolean;
   plan_id: string;
   subscription_status: string;
+  subscription_started_at: string | null;
   subscription_ends_at: string | null;
+  subscription_renews_at: string | null;
   billing_cycle: "monthly" | "annual" | null;
   subscription_source: string;
   created_at: string;
@@ -55,7 +57,9 @@ export type AdminUserSummary = {
   onboarding_completed: boolean;
   plan_id: string;
   subscription_status: string;
+  subscription_started_at: string | null;
   subscription_ends_at: string | null;
+  subscription_renews_at: string | null;
   billing_cycle: "monthly" | "annual" | null;
   subscription_source: string;
   is_admin: boolean;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { initMercadoPago, Payment } from "@mercadopago/sdk-react";
+import { CardPayment, initMercadoPago } from "@mercadopago/sdk-react";
 
 import { ApiClientError } from "@/lib/api-client";
 import {
@@ -23,35 +23,49 @@ export function PremiumPaymentBrick({
   onSuccess,
   onError,
 }: PremiumPaymentBrickProps) {
-  const [ready, setReady] = useState(false);
+  const [brickReady, setBrickReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState("");
   const initializedKey = useRef<string | null>(null);
+  const missingPublicKey = !session.public_key;
 
   useEffect(() => {
     if (!session.public_key) {
       return;
     }
     if (initializedKey.current === session.public_key) {
-      setReady(true);
       return;
     }
     initMercadoPago(session.public_key, { locale: "pt-BR" });
     initializedKey.current = session.public_key;
-    setReady(true);
   }, [session.public_key]);
 
-  if (!ready) {
-    return <p className="pricing-brick-status">Carregando formulário de cartão…</p>;
+  if (missingPublicKey) {
+    return (
+      <div className="form-message form-error" role="alert">
+        Chave pública de pagamento ausente.
+      </div>
+    );
   }
 
   return (
     <div className={`pricing-brick${submitting ? " is-submitting" : ""}`}>
+      {!brickReady && !localError && (
+        <p className="pricing-brick-status" role="status">
+          Carregando formulário de cartão…
+        </p>
+      )}
+      {localError && (
+        <div className="form-message form-error" role="alert">
+          {localError}
+        </div>
+      )}
       {submitting && (
         <p className="pricing-brick-status" role="status">
           Confirmando assinatura…
         </p>
       )}
-      <Payment
+      <CardPayment
         locale="pt-BR"
         initialization={{
           amount: session.amount,
@@ -63,27 +77,33 @@ export function PremiumPaymentBrick({
         }}
         customization={{
           paymentMethods: {
-            creditCard: "all",
             maxInstallments: 1,
-          },
-          visual: {
-            hidePaymentButton: false,
-            defaultPaymentOption: {
-              creditCardForm: true,
+            types: {
+              included: ["credit_card"],
             },
           },
         }}
-        onReady={() => undefined}
-        onError={() => {
-          onError("Não foi possível carregar o formulário de pagamento.");
+        onReady={() => {
+          setBrickReady(true);
+          setLocalError("");
+        }}
+        onError={(error) => {
+          const message =
+            error?.message ||
+            "Não foi possível carregar o formulário de pagamento. Verifique bloqueios do navegador e tente de novo.";
+          setLocalError(message);
+          onError(message);
         }}
         onSubmit={async (param) => {
-          const token = param.formData?.token;
+          const token = param.token;
           if (!token) {
-            onError("Não foi possível tokenizar o cartão. Tente novamente.");
+            const message = "Não foi possível tokenizar o cartão. Tente novamente.";
+            setLocalError(message);
+            onError(message);
             return;
           }
           setSubmitting(true);
+          setLocalError("");
           try {
             await subscribeWithCardToken(
               accessToken,
@@ -92,11 +112,12 @@ export function PremiumPaymentBrick({
             );
             onSuccess();
           } catch (caught) {
-            onError(
+            const message =
               caught instanceof ApiClientError
                 ? caught.message
-                : "Não foi possível concluir a assinatura agora.",
-            );
+                : "Não foi possível concluir a assinatura agora.";
+            setLocalError(message);
+            onError(message);
             setSubmitting(false);
             throw caught;
           }

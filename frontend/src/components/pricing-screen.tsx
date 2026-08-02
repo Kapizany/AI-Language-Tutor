@@ -231,15 +231,32 @@ export function PricingScreen({
                 {loading ? "Preparando pagamento..." : "Pagar com cartão"}
               </Button>
             ) : session?.access_token ? (
-              <PremiumPaymentBrick
-                key={`${checkoutSession.billing_cycle}-${checkoutSession.amount}`}
-                accessToken={session.access_token}
-                session={checkoutSession}
-                onSuccess={() => {
-                  void finishSubscription();
-                }}
-                onError={(message) => setError(message)}
-              />
+              <>
+                {error && (
+                  <div className="form-message form-error" role="alert">
+                    {error}
+                  </div>
+                )}
+                <PremiumPaymentBrick
+                  key={`${checkoutSession.billing_cycle}-${checkoutSession.amount}`}
+                  accessToken={session.access_token}
+                  session={checkoutSession}
+                  onSuccess={() => {
+                    void finishSubscription();
+                  }}
+                  onError={(message) => setError(message)}
+                />
+                <button
+                  type="button"
+                  className="text-link"
+                  onClick={() => {
+                    setCheckoutSession(null);
+                    setError("");
+                  }}
+                >
+                  Voltar e escolher outro ciclo
+                </button>
+              </>
             ) : null}
 
             <ul className="pricing-trust-row">

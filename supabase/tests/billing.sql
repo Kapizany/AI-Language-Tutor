@@ -189,4 +189,22 @@ begin
 end;
 $$;
 
+-- Checkout RPC accepts numeric Asaas payment ids (billing_checkouts.id stays bigint).
+do $$
+declare
+  result jsonb;
+begin
+  result := public.create_billing_checkout(
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'monthly'::text,
+    '6'::text,
+    'pix_automatic'::text,
+    'asaas'::text
+  );
+  if coalesce(result ->> 'created', 'false') <> 'true' then
+    raise exception 'Billing failure: create_billing_checkout rejected numeric id';
+  end if;
+end;
+$$;
+
 rollback;

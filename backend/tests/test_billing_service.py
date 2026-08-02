@@ -210,6 +210,66 @@ async def test_create_pix_checkout_returns_qr_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_pix_checkout_fetches_qr_from_secondary_endpoint() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/rpc/reserve_billing_checkout_attempt"):
+            return httpx.Response(200, request=request, json={"allowed": True})
+        if request.url.path.endswith("/rpc/create_billing_checkout"):
+            return httpx.Response(204, request=request)
+        return httpx.Response(500, request=request)
+
+    def asaas_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/customers"):
+            return httpx.Response(200, request=request, json={"data": [{"id": "cus_123"}]})
+        if request.method == "POST" and request.url.path.endswith("/payments"):
+            return httpx.Response(200, request=request, json={"id": "pay_777"})
+        if request.method == "GET" and request.url.path.endswith("/pixQrCode"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"encodedImage": "base64qr", "payload": "000201010212"},
+            )
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(asaas_handler),
+    )
+    try:
+        result = await service.create_subscription_checkout(
+            user_id=user_id,
+            user_email="learner@example.test",
+            display_name=None,
+            billing_cycle="annual",
+            payment_method="pix_automatic",
+            cpf="32502129893",
+            remote_ip="127.0.0.1",
+        )
+        assert result["pix_qr_code"] == "base64qr"
+        assert result["pix_copy_paste"] == "000201010212"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_handle_webhook_activates_premium_on_payment_confirmed() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(

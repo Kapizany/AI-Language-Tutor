@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import type { Session } from "@supabase/supabase-js";
 import {
   Check,
@@ -440,10 +441,13 @@ export function PricingScreen({
                 <p className="pricing-brick-status">{statusMessage}</p>
                 {checkoutResult?.payment_method === "pix_automatic" && checkoutResult.pix_qr_code && (
                   <div className="pricing-pix-panel">
-                    <img
+                    <Image
                       src={`data:image/png;base64,${checkoutResult.pix_qr_code}`}
                       alt="QR Code PIX para pagamento"
                       className="pricing-pix-qr"
+                      width={220}
+                      height={220}
+                      unoptimized
                     />
                     {checkoutResult.pix_copy_paste && (
                       <Button variant="secondary" full onClick={() => void copyPixCode()}>

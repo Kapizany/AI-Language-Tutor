@@ -392,6 +392,17 @@ class BillingService:
             )
             encoded_image = pix_payment.get("encodedImage")
             payload = pix_payment.get("payload")
+            if not isinstance(encoded_image, str) or not isinstance(payload, str):
+                pix_qr = await self._asaas_request(
+                    "GET",
+                    f"/payments/{payment_id}/pixQrCode",
+                )
+                if not isinstance(encoded_image, str):
+                    qr_image = pix_qr.get("encodedImage")
+                    encoded_image = qr_image if isinstance(qr_image, str) else None
+                if not isinstance(payload, str):
+                    qr_payload = pix_qr.get("payload")
+                    payload = qr_payload if isinstance(qr_payload, str) else None
             return {
                 "status": "pending",
                 "payment_method": payment_method,

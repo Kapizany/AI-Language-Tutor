@@ -2,22 +2,25 @@
 
 import { Bell, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
-import { languageDetails, type LearnerPreferences, type ScreenId } from "@/lib/learner";
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useLearnerOptional } from "@/lib/learner-context";
+import { languageDetails, type ScreenId } from "@/lib/learner";
 
 export function AppHeader({
   title,
   subtitle,
   displayName,
-  preferences,
   onNavigate,
 }: {
   title: string;
   subtitle?: string;
   displayName?: string;
-  preferences?: LearnerPreferences | null;
   onNavigate?: (screen: ScreenId) => void;
 }) {
-  const language = preferences ? languageDetails[preferences.targetLanguage] : languageDetails.en;
+  const learner = useLearnerOptional();
+  const language = learner?.preferences
+    ? languageDetails[learner.preferences.targetLanguage]
+    : languageDetails.en;
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [readNotifications, setReadNotifications] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -34,7 +37,7 @@ export function AppHeader({
     {
       id: "daily-goal",
       title: "Sua meta diária está esperando",
-      detail: `Reserve ${preferences?.studyMinutesPerDay || 20} minutos para uma atividade.`,
+      detail: `Reserve ${learner?.preferences?.studyMinutesPerDay || 20} minutos para uma atividade.`,
       screen: "learn",
     },
     {
@@ -78,13 +81,7 @@ export function AppHeader({
         {subtitle && <p>{subtitle}</p>}
       </div>
       <div className="app-header-tools">
-        <button
-          className="language-switch"
-          onClick={() => onNavigate?.("profile")}
-          title="Trocar o idioma estudado nas configurações"
-        >
-          <span>{language.flag}</span> {language.name}
-        </button>
+        <LanguageSwitcher />
         <div className="notification-center">
           <button
             className="icon-button"

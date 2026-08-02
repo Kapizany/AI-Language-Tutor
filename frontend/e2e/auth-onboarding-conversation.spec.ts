@@ -85,7 +85,18 @@ async function mockSupabase(
     if (path.endsWith("/rest/v1/learner_preferences")) {
       return json(route, onboardingCompleted ? [preferences] : []);
     }
-    if (path.endsWith("/rest/v1/rpc/save_learner_settings")) {
+    if (path.endsWith("/rest/v1/learner_languages")) {
+      return json(route, onboardingCompleted ? [{
+        target_language: preferences.target_language,
+        current_level: preferences.current_level,
+      }] : []);
+    }
+    if (
+      path.endsWith("/rest/v1/rpc/save_learner_settings")
+      || path.endsWith("/rest/v1/rpc/switch_active_language")
+      || path.endsWith("/rest/v1/rpc/add_learner_language")
+      || path.endsWith("/rest/v1/rpc/update_learner_language_level")
+    ) {
       captureSettings?.(request.postDataJSON() as Record<string, unknown>);
       return route.fulfill({ status: 204 });
     }

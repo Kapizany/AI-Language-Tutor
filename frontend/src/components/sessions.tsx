@@ -86,7 +86,6 @@ export function SessionHistory({
         title="Suas conversas"
         subtitle="Todo o histórico das suas práticas com o tutor."
         displayName={displayName}
-        preferences={preferences}
         onNavigate={go}
       />
 

@@ -75,7 +75,15 @@ import {
   type LearnerPreferencesRow,
   type OnboardingData,
   type ScreenId,
+  type TargetLanguage,
 } from "@/lib/learner";
+import { LearnerProvider, useLearner } from "@/lib/learner-context";
+import {
+  fallbackStudiedLanguages,
+  mapLearnerLanguages,
+  type LearnerLanguage,
+  type LearnerLanguageRow,
+} from "@/lib/learner-languages";
 import {
   loadLearnerLearningProgress,
   loadLearningContent,
@@ -664,7 +672,7 @@ function Dashboard({ go, displayName, preferences, session, scenarios, startScen
   const monthName = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date());
   return (
     <div className="screen-content dashboard-screen">
-      <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} preferences={preferences} onNavigate={go}/>
+      <AppHeader title={`Olá, ${displayName}!`} subtitle={`Continue avançando em ${language}.`} displayName={displayName} onNavigate={go}/>
       <div className="streak-banner">
         <div className="streak-main"><span><Flame/></span><div><small>SEQUÊNCIA ATUAL</small><strong>{metricsLoading ? "…" : `${metrics.streak} ${metrics.streak === 1 ? "dia" : "dias"}`}</strong></div></div>
         <div className="week-dots">{["S","T","Q","Q","S","S","D"].map((day, index)=><div key={`${day}-${index}`} className={metrics.activeWeekdays[index] ? "done" : ""}><span>{day}</span><i>{metrics.activeWeekdays[index] ? <Check size={12}/> : ""}</i></div>)}</div>
@@ -741,7 +749,7 @@ function Plan({ go, displayName, preferences, session, scenarios, startScenario 
 
   return (
     <div className="screen-content">
-      <AppHeader title="Sua rotina de estudo" subtitle="O que você definiu e o que já cumpriu nesta semana." displayName={displayName} preferences={preferences} onNavigate={go}/>
+      <AppHeader title="Sua rotina de estudo" subtitle="O que você definiu e o que já cumpriu nesta semana." displayName={displayName} onNavigate={go}/>
       <div className="plan-overview">
         <div><span className="eyebrow">SEU OBJETIVO</span><h2>{preferences ? goalLabels[preferences.learningGoal] : "Conversação"}</h2><p>{preferences ? levelLabels[preferences.currentLevel] : "Nível inicial"} · {preferences?.studyMinutesPerDay || 20} minutos por dia · {metrics.weeklyTarget} {metrics.weeklyTarget === 1 ? "dia" : "dias"} por semana.</p></div>
         <div className="plan-progress"><strong>{loading ? "…" : `${metrics.weeklyPercent}%`}</strong><div><i style={{ width: `${metrics.weeklyPercent}%` }}/></div><span>{metrics.activeDaysThisWeek} de {metrics.weeklyTarget} dias nesta semana</span></div>
@@ -803,7 +811,7 @@ function Scenarios({
   if (catalogError) {
     return (
       <div className="screen-content">
-        <AppHeader title="Escolha uma conversa" displayName={displayName} preferences={preferences} onNavigate={go}/>
+        <AppHeader title="Escolha uma conversa" displayName={displayName} onNavigate={go}/>
         <div className="learning-loading"><MessageCircle/><p>{catalogError}</p><Button onClick={reloadCatalog}>Tentar novamente</Button></div>
       </div>
     );
@@ -812,7 +820,7 @@ function Scenarios({
   if (!scenarios.length) {
     return (
       <div className="screen-content">
-        <AppHeader title="Escolha uma conversa" displayName={displayName} preferences={preferences} onNavigate={go}/>
+        <AppHeader title="Escolha uma conversa" displayName={displayName} onNavigate={go}/>
         <div className="learning-loading"><Sparkles/><p>Carregando os cenários...</p></div>
       </div>
     );
@@ -820,7 +828,7 @@ function Scenarios({
 
   return (
     <div className="screen-content">
-      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida." displayName={displayName} preferences={preferences} onNavigate={go}/>
+      <AppHeader title="Escolha uma conversa" subtitle="Pratique situações que fazem parte da sua vida." displayName={displayName} onNavigate={go}/>
       <div className="filter-row">
         <div className="search-box"><Search size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cenário..."/></div>
         <div className="filter-pills">
@@ -857,7 +865,7 @@ function Scenarios({
 function Assessment({ displayName, preferences }: { displayName: string; preferences: LearnerPreferences | null }) {
   return (
     <div className="screen-content assessment-screen">
-      <AppHeader title="Descubra seu nível" subtitle="Uma avaliação curta para personalizar seu plano." displayName={displayName} preferences={preferences}/>
+      <AppHeader title="Descubra seu nível" subtitle="Uma avaliação curta para personalizar seu plano." displayName={displayName}/>
       <div className="assessment-intro">
         <div className="assessment-copy"><span className="eyebrow light">AVALIAÇÃO OPCIONAL</span><h2>Entenda onde você está — sem pressão.</h2><p>Vamos avaliar compreensão, vocabulário e escrita. O resultado é uma estimativa, não uma certificação.</p><div className="assessment-meta"><span><Clock3/> 8–10 minutos</span><span><Target/> 18 questões</span><span><ShieldCheck/> Resultado privado</span></div><Button variant="secondary" disabled>Avaliação em breve</Button></div>
         <div className="level-scale"><span>A1<small>Iniciante</small></span><span className="active">A2<small>Básico</small></span><span>B1<small>Intermediário</small></span><span>B2<small>Independente</small></span></div>
@@ -971,7 +979,7 @@ function Progress({ displayName, preferences, session }: { displayName: string; 
 
   return (
     <div className="screen-content">
-      <AppHeader title="Seu progresso" subtitle="Evidências reais do que você vem construindo." displayName={displayName} preferences={preferences}/>
+      <AppHeader title="Seu progresso" subtitle="Evidências reais do que você vem construindo." displayName={displayName}/>
       <div className="period-tabs">{([[7, "7 dias"], [30, "30 dias"], [90, "3 meses"], [0, "Todo período"]] as Array<[ProgressPeriod, string]>).map(([value, label]) => <button key={value} className={period === value ? "active" : ""} onClick={() => setPeriod(value)}>{label}</button>)}</div>
       {progressError && <div className="form-message form-error" role="alert">{progressError}</div>}
       <div className="stats-grid">
@@ -999,17 +1007,16 @@ function Profile({
   go,
   displayName,
   email,
-  preferences,
   saveSettings,
   session,
 }: {
   go: (id: ScreenId) => void;
   displayName: string;
   email: string;
-  preferences: LearnerPreferences | null;
   saveSettings: (name: string, preferences: LearnerPreferences) => Promise<AuthFeedback>;
   session: Session | null;
 }) {
+  const { preferences, studiedLanguages, switchLanguage, addLanguage } = useLearner();
   const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
   const [name, setName] = useState(displayName);
   const [draft, setDraft] = useState<LearnerPreferences>(preferences || {
@@ -1022,10 +1029,24 @@ function Profile({
     interests: [],
     desiredScenarios: [],
   });
+  const [levelEdits, setLevelEdits] = useState<
+    Partial<Record<TargetLanguage, LearnerPreferences["currentLevel"]>>
+  >({});
+  const [newLanguage, setNewLanguage] = useState<TargetLanguage | "">("");
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [saving, setSaving] = useState(false);
   const [entitlements, setEntitlements] = useState<EntitlementsSummary | null>(null);
   const [entitlementsError, setEntitlementsError] = useState("");
+
+  const resolvedLanguageLevels = studiedLanguages.map((entry) => ({
+    ...entry,
+    currentLevel: levelEdits[entry.targetLanguage] ?? entry.currentLevel,
+  }));
+
+  const studiedSet = new Set(studiedLanguages.map((entry) => entry.targetLanguage));
+  const availableLanguages = (Object.keys(languageDetails) as TargetLanguage[]).filter(
+    (language) => !studiedSet.has(language),
+  );
 
   useEffect(() => {
     if (!session?.access_token || section !== "plan") return;
@@ -1045,13 +1066,48 @@ function Profile({
 
   const save = async () => {
     setSaving(true);
-    setFeedback(await saveSettings(name, draft));
+    const supabase = getSupabaseBrowserClient();
+    if (supabase && session) {
+      for (const entry of resolvedLanguageLevels) {
+        const previous = studiedLanguages.find((item) => item.targetLanguage === entry.targetLanguage);
+        if (!previous || entry.currentLevel === previous.currentLevel) continue;
+        const { error } = await supabase.rpc("update_learner_language_level", {
+          p_target_language: entry.targetLanguage,
+          p_current_level: entry.currentLevel,
+        });
+        if (error) {
+          setSaving(false);
+          setFeedback({ error: "Não foi possível atualizar o nível de um dos idiomas." });
+          return;
+        }
+      }
+    }
+
+    const activeLevel =
+      resolvedLanguageLevels.find((entry) => entry.targetLanguage === draft.targetLanguage)?.currentLevel
+      || draft.currentLevel;
+    setFeedback(await saveSettings(name, { ...draft, currentLevel: activeLevel }));
+    setSaving(false);
+  };
+
+  const addStudiedLanguage = async () => {
+    if (!newLanguage) return;
+    setSaving(true);
+    const result = await addLanguage(newLanguage, "unknown");
+    if (result.error) {
+      setFeedback({ error: result.error });
+      setSaving(false);
+      return;
+    }
+    const switched = await switchLanguage(newLanguage);
+    setFeedback(switched.error ? { error: switched.error } : { success: `${languageDetails[newLanguage].name} adicionado.` });
+    setNewLanguage("");
     setSaving(false);
   };
 
   return (
     <div className="screen-content">
-      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você." displayName={displayName} preferences={preferences}/>
+      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você." displayName={displayName}/>
       <div className="settings-layout">
         <aside className="settings-nav">
           <button className={section === "profile" ? "active" : ""} onClick={() => setSection("profile")}><CircleUserRound/> Perfil</button>
@@ -1065,10 +1121,21 @@ function Profile({
             <section><div className="profile-heading"><div className="large-avatar">{name.slice(0, 2).toUpperCase()}</div><div><h2>{name || "Aluno"}</h2><p>Minha aprendizagem</p></div></div></section>
             <section><h3>Informações pessoais</h3><div className="form-grid"><label>Nome<input maxLength={100} value={name} onChange={(event) => setName(event.target.value)}/></label><label>Email<input value={email} readOnly/></label></div></section>
           </>}
-          {section === "languages" && <section><h3>Idioma e nível</h3><div className="form-grid">
-            <label>Idioma estudado<select value={draft.targetLanguage} onChange={(event) => setDraft({...draft, targetLanguage: event.target.value as OnboardingData["targetLanguage"]})}>{Object.entries(languageDetails).map(([value, item]) => <option key={value} value={value}>{item.flag} {item.name}</option>)}</select></label>
-            <label>Nível atual<select value={draft.currentLevel} onChange={(event) => setDraft({...draft, currentLevel: event.target.value as OnboardingData["currentLevel"]})}>{selectableLevels.map((value) => <option key={value} value={value}>{levelLabels[value]}</option>)}</select></label>
-          </div></section>}
+          {section === "languages" && <section><h3>Idiomas que você estuda</h3><p>Use a bandeira no topo da tela para trocar rapidamente. Ajuste o nível de cada idioma aqui.</p><div className="language-cards">
+            {resolvedLanguageLevels.map((entry) => {
+              const details = languageDetails[entry.targetLanguage];
+              const active = preferences?.targetLanguage === entry.targetLanguage;
+              return (
+                <article key={entry.targetLanguage} className={`language-card${active ? " active" : ""}`}>
+                  <div className="language-card-title"><span aria-hidden="true">{details.flag}</span><div><strong>{details.name}</strong>{active && <span className="language-card-badge">Ativo agora</span>}</div></div>
+                  <label>Nível<select value={entry.currentLevel} onChange={(event) => setLevelEdits((current) => ({ ...current, [entry.targetLanguage]: event.target.value as LearnerPreferences["currentLevel"] }))}>{selectableLevels.map((value) => <option key={value} value={value}>{levelLabels[value]}</option>)}</select></label>
+                  {!active && <Button variant="secondary" onClick={() => void switchLanguage(entry.targetLanguage)}>Usar agora</Button>}
+                </article>
+              );
+            })}
+          </div>
+          {availableLanguages.length > 0 && <div className="language-card-add"><label>Adicionar outro idioma<select value={newLanguage} onChange={(event) => setNewLanguage(event.target.value as TargetLanguage)}><option value="">Selecione</option>{availableLanguages.map((language) => <option key={language} value={language}>{languageDetails[language].flag} {languageDetails[language].name}</option>)}</select></label><Button variant="secondary" disabled={!newLanguage || saving} onClick={() => void addStudiedLanguage()}>Adicionar idioma</Button></div>}
+          </section>}
           {section === "plan" && <section><h3>Plano e metas</h3>
             {entitlements && (
               <div className="usage-grid" aria-label="Uso diário do plano">
@@ -1648,7 +1715,7 @@ function LearningCenter({
   if (!learningContent) {
     return (
       <div className="screen-content">
-        <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName} preferences={preferences}/>
+        <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName}/>
         <div className="learning-loading">
           {contentError ? <><BookOpen/><p>{contentError}</p><Button onClick={() => setContentVersion((value) => value + 1)}>Tentar novamente</Button></> : <><Sparkles/><p>Carregando seu catálogo...</p></>}
         </div>
@@ -1658,7 +1725,7 @@ function LearningCenter({
 
   return (
     <div className="screen-content">
-      <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName} preferences={preferences}/>
+      <AppHeader title={reviewOnly ? "Revisar" : "Aprender"} subtitle={reviewOnly ? "Fortaleça o vocabulário que você está aprendendo." : "Lições rápidas, leitura e gramática no seu ritmo."} displayName={displayName}/>
       {!reviewOnly && (
         <div className="learning-tabs" role="tablist">
           <button className={mode === "summary" ? "active" : ""} onClick={() => chooseMode("summary")}><Map/> Sumário</button>
@@ -1925,6 +1992,7 @@ export default function ProductPrototype() {
   const [authLoading, setAuthLoading] = useState(true);
   const [displayName, setDisplayName] = useState("Aluno");
   const [preferences, setPreferences] = useState<LearnerPreferences | null>(null);
+  const [studiedLanguages, setStudiedLanguages] = useState<LearnerLanguage[]>([]);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [scenarios, setScenarios] = useState<ScenarioCatalogItem[]>([]);
   const [catalogError, setCatalogError] = useState("");
@@ -1934,6 +2002,27 @@ export default function ProductPrototype() {
     useState<CompletedConversationView | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
+
+  const loadStudiedLanguages = async (userId: string, nextPreferences: LearnerPreferences | null) => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setStudiedLanguages(fallbackStudiedLanguages(nextPreferences));
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("learner_languages")
+      .select("target_language,current_level")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    if (error || !data?.length) {
+      setStudiedLanguages(fallbackStudiedLanguages(nextPreferences));
+      return;
+    }
+
+    setStudiedLanguages(mapLearnerLanguages(data as LearnerLanguageRow[]));
+  };
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -1984,7 +2073,11 @@ export default function ProductPrototype() {
         if (profile?.display_name) setDisplayName(profile.display_name);
         currentOnboardingCompleted = Boolean(profile?.onboarding_completed && preferencesRow);
         setOnboardingCompleted(currentOnboardingCompleted);
-        setPreferences(preferencesRow ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow) : null);
+        const mappedPreferences = preferencesRow
+          ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow)
+          : null;
+        setPreferences(mappedPreferences);
+        await loadStudiedLanguages(currentSession.user.id, mappedPreferences);
       }
 
       const fromHash = window.location.hash.replace("#/", "") as ScreenId;
@@ -2014,6 +2107,7 @@ export default function ProductPrototype() {
           return;
         }
         setPreferences(null);
+        setStudiedLanguages([]);
         setOnboardingCompleted(false);
         setDisplayName("Aluno");
         setScreen("login");
@@ -2212,7 +2306,11 @@ export default function ProductPrototype() {
     if (profile?.display_name) setDisplayName(profile.display_name);
     const hasCompletedOnboarding = Boolean(profile?.onboarding_completed && preferencesRow);
     setOnboardingCompleted(hasCompletedOnboarding);
-    setPreferences(preferencesRow ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow) : null);
+    const mappedPreferences = preferencesRow
+      ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow)
+      : null;
+    setPreferences(mappedPreferences);
+    await loadStudiedLanguages(data.user.id, mappedPreferences);
     navigate(hasCompletedOnboarding ? "dashboard" : "onboarding");
     return {};
   };
@@ -2273,6 +2371,7 @@ export default function ProductPrototype() {
     if (error) return { error: "Não foi possível concluir o onboarding. Tente novamente." };
 
     setPreferences({ ...data, studyDaysPerWeek: 5 });
+    await loadStudiedLanguages(session.user.id, { ...data, studyDaysPerWeek: 5 });
     setOnboardingCompleted(true);
     navigate("dashboard");
     return {};
@@ -2302,7 +2401,50 @@ export default function ProductPrototype() {
     await supabase.auth.updateUser({ data: { display_name: normalizedName } });
     setDisplayName(normalizedName);
     setPreferences(nextPreferences);
+    if (session) await loadStudiedLanguages(session.user.id, nextPreferences);
     return { success: "Alterações salvas." };
+  };
+
+  const switchLanguage = async (language: TargetLanguage): Promise<{ error?: string }> => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return { error: "Sua sessão expirou. Entre novamente." };
+
+    const selected = studiedLanguages.find((entry) => entry.targetLanguage === language);
+    if (!selected) return { error: "Esse idioma ainda não está na sua lista." };
+
+    const { error } = await supabase.rpc("switch_active_language", {
+      p_target_language: language,
+    });
+    if (error) return { error: "Não foi possível trocar o idioma. Tente novamente." };
+
+    setPreferences((current) =>
+      current
+        ? {
+            ...current,
+            targetLanguage: language,
+            currentLevel: selected.currentLevel,
+          }
+        : null,
+    );
+    setCatalogVersion((value) => value + 1);
+    return {};
+  };
+
+  const addLanguage = async (
+    language: TargetLanguage,
+    level: LearnerLanguage["currentLevel"] = "unknown",
+  ): Promise<{ error?: string }> => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !session) return { error: "Sua sessão expirou. Entre novamente." };
+
+    const { error } = await supabase.rpc("add_learner_language", {
+      p_target_language: language,
+      p_current_level: level,
+    });
+    if (error) return { error: "Não foi possível adicionar esse idioma." };
+
+    await loadStudiedLanguages(session.user.id, preferences);
+    return {};
   };
 
   const signOut = async () => {
@@ -2345,7 +2487,7 @@ export default function ProductPrototype() {
       case "confirm-email": return <ConfirmEmail email={pendingEmail} go={go} resend={resendConfirmation} checkConfirmation={checkConfirmation}/>;
       case "onboarding": return <Onboarding complete={completeOnboarding} go={go} initialPreferences={preferences} userId={session?.user.id || "anonymous"}/>;
       case "dashboard": return <Dashboard go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
-      case "learn": return <LearningCenter key="learn" displayName={displayName} preferences={preferences} session={session} goToScenarios={() => go("scenarios")}/>;
+      case "learn": return <LearningCenter key={`learn-${preferences?.targetLanguage || "en"}`} displayName={displayName} preferences={preferences} session={session} goToScenarios={() => go("scenarios")}/>;
       case "plan": return <Plan go={go} displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} startScenario={selectScenario}/>;
       case "scenarios": return <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
       case "conversation":
@@ -2354,16 +2496,22 @@ export default function ProductPrototype() {
           : <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
       case "summary": return <ConversationSummary completed={completedConversation} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
       case "sessions": return <SessionHistory displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} go={go} resumeScenario={selectScenario}/>;
-      case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
+      case "vocabulary": return <LearningCenter key={`review-${preferences?.targetLanguage || "en"}`} displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
-      case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings} session={session}/>;
+      case "profile": return <Profile key={`${preferences?.targetLanguage}-${preferences?.currentLevel}`} go={go} displayName={displayName} email={session?.user.email || ""} saveSettings={saveSettings} session={session}/>;
       case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
       case "admin": return session ? <AdminPanel session={session} go={go}/> : null;
     }
   })();
 
   return (
+    <LearnerProvider
+      preferences={preferences}
+      studiedLanguages={studiedLanguages}
+      switchLanguage={switchLanguage}
+      addLanguage={addLanguage}
+    >
     <div className={appScreens.has(screen) ? "app-shell" : screen === "admin" ? "public-page admin-page" : "public-page"}>
       {appScreens.has(screen) && (
         <a className="skip-link" href="#app-main">
@@ -2380,5 +2528,6 @@ export default function ProductPrototype() {
       </div>
       {process.env.NODE_ENV === "development" && <PrototypeNavigator current={screen} go={go}/>}
     </div>
+    </LearnerProvider>
   );
 }

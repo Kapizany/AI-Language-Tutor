@@ -57,7 +57,7 @@ export function AppHeader({
       ? [{
           id: "premium-offer",
           title: "Desbloqueie mais prática",
-          detail: "Premium a partir de R$ 15,83/mês no anual — 10× mais conversas e voz.",
+          detail: "Premium a partir de R$ 14,93/mês no anual — 3 meses grátis.",
           screen: "pricing" as ScreenId,
         }]
       : []),

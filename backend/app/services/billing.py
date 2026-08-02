@@ -21,7 +21,7 @@ PRICING: dict[BillingCycle, dict[str, Any]] = {
         "reason": "Lume Tutor Premium - Mensal",
     },
     "annual": {
-        "amount": 189.90,
+        "amount": 179.10,
         "frequency": 12,
         "frequency_type": "months",
         "reason": "Lume Tutor Premium - Anual",

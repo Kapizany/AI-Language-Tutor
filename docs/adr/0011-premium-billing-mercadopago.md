@@ -5,7 +5,7 @@ Status: aceito.
 ## Decisão
 
 Assinaturas Premium self-serve usam **Mercado Pago Preapproval** (recorrência
-mensal R$ 19,90 ou anual R$ 189,90). O FastAPI cria checkout, recebe webhooks
+mensal R$ 19,90 ou anual R$ 179,10 — 9 meses pagos, 3 grátis). O FastAPI cria checkout, recebe webhooks
 e sincroniza `user_subscriptions` via RPC `sync_billing_subscription`.
 
 Cancelamentos respeitam **grace period**: `status = canceled` com `ends_at`

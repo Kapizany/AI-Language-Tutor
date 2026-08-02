@@ -175,7 +175,7 @@ async def billing_plans() -> dict[str, Any]:
             "annual": {
                 "amount": PRICING["annual"]["amount"],
                 "label": "Anual",
-                "savings_label": "Economize 2 meses",
+                "savings_label": "3 meses grátis",
             },
         },
         "comparison": {

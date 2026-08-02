@@ -26,7 +26,7 @@ async def test_billing_plans_are_public() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["plans"]["monthly"]["amount"] == 19.90
-    assert payload["plans"]["annual"]["amount"] == 189.90
+    assert payload["plans"]["annual"]["amount"] == 179.10
 
 
 @pytest.mark.asyncio

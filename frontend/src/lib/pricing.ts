@@ -6,12 +6,13 @@ export const PREMIUM_PRICING = {
     billingNote: "Cobrança mensal recorrente",
   },
   annual: {
-    amount: 189.9,
+    amount: 179.1,
     label: "Anual",
     suffix: "/ano",
-    savingsLabel: "2 meses grátis",
-    savingsPercent: 21,
-    billingNote: "Cobrança anual recorrente",
+    paidMonths: 9,
+    savingsLabel: "3 meses grátis",
+    savingsPercent: 25,
+    billingNote: "Cobrança anual recorrente (9 meses pelo preço de 12)",
   },
 } as const;
 
@@ -128,7 +129,7 @@ export const PRICING_FAQ = [
   {
     question: "Qual a diferença entre mensal e anual?",
     answer:
-      "O plano anual custa R$ 189,90 por ano (equivalente a cerca de R$ 15,83/mês) e equivale a 2 meses grátis em relação ao mensal.",
+      "O plano anual custa R$ 179,10 por ano — equivalente a pagar 9 meses (9 × R$ 19,90) e levar 3 meses grátis, em vez de R$ 238,80 pagando mês a mês.",
   },
   {
     question: "O pagamento é seguro?",
@@ -165,8 +166,20 @@ export function annualMonthlyEquivalent() {
   return PREMIUM_PRICING.annual.amount / 12;
 }
 
-export function annualVsMonthlyTotal() {
+export function annualListPrice() {
   return PREMIUM_PRICING.monthly.amount * 12;
+}
+
+export function annualVsMonthlyTotal() {
+  return annualListPrice();
+}
+
+export function annualDiscountLine() {
+  return `${PREMIUM_PRICING.annual.paidMonths} × ${formatBrl(PREMIUM_PRICING.monthly.amount)}`;
+}
+
+export function annualSavingsAmount() {
+  return annualListPrice() - PREMIUM_PRICING.annual.amount;
 }
 
 export function formatMultiplier(free: number, premium: number) {

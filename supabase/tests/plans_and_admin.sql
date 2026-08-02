@@ -136,6 +136,67 @@ begin
 end;
 $$;
 
+-- Admin role grant/revoke is audited
+do $$
+declare
+  summary jsonb;
+  result jsonb;
+  audit_count integer;
+begin
+  summary := public.admin_get_user_summary(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000001'
+  );
+  if coalesce(summary ->> 'is_admin', 'false') <> 'false' then
+    raise exception 'Admin summary failure: free user should not be admin';
+  end if;
+
+  result := public.admin_set_user_admin_role(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000001',
+    true
+  );
+  if coalesce(result ->> 'updated', 'false') <> 'true' then
+    raise exception 'Admin role failure: grant did not succeed';
+  end if;
+
+  summary := public.admin_get_user_summary(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000001'
+  );
+  if coalesce(summary ->> 'is_admin', 'false') <> 'true' then
+    raise exception 'Admin summary failure: granted user should be admin';
+  end if;
+
+  select count(*) into audit_count
+  from public.admin_audit_logs
+  where action = 'user.admin_granted'
+    and target_id = '20000000-0000-0000-0000-000000000001';
+
+  if audit_count <> 1 then
+    raise exception 'Audit failure: admin grant was not logged';
+  end if;
+
+  result := public.admin_set_user_admin_role(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000001',
+    false
+  );
+  if coalesce(result ->> 'updated', 'false') <> 'true' then
+    raise exception 'Admin role failure: revoke did not succeed';
+  end if;
+
+  result := public.admin_set_user_admin_role(
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000002',
+    false
+  );
+  if coalesce(result ->> 'reason', '') <> 'cannot_revoke_self' then
+    raise exception 'Admin role failure: self-revoke should be blocked';
+  end if;
+end;
+$$;
+
 -- Suspension blocks conversation start
 do $$
 declare

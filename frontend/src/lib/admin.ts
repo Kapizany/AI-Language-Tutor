@@ -51,6 +51,7 @@ export type AdminUserSummary = {
   onboarding_completed: boolean;
   plan_id: string;
   subscription_status: string;
+  is_admin: boolean;
   created_at: string;
   target_language: string | null;
   current_level: string | null;
@@ -120,6 +121,17 @@ export async function changeAdminUserStatus(
   return apiRequest<{ updated: boolean; account_status: string }>(
     `/api/v1/admin/users/${userId}/status`,
     { accessToken, method: "PATCH", body: { status, reason } },
+  );
+}
+
+export async function changeAdminUserRole(
+  accessToken: string,
+  userId: string,
+  isAdmin: boolean,
+) {
+  return apiRequest<{ updated: boolean; is_admin: boolean }>(
+    `/api/v1/admin/users/${userId}/admin-role`,
+    { accessToken, method: "PATCH", body: { is_admin: isAdmin } },
   );
 }
 

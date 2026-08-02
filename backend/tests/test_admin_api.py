@@ -86,6 +86,38 @@ async def test_admin_can_access_overview() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_can_grant_admin_role() -> None:
+    async with AdminHarness(is_admin=True) as harness:
+        harness.admin.set_user_admin_role.return_value = {
+            "updated": True,
+            "is_admin": True,
+        }
+        response = await harness.client.patch(
+            f"/api/v1/admin/users/{LEARNER_ID}/admin-role",
+            json={"is_admin": True},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updated"] is True
+    assert payload["is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_role_change_rejects_invalid_operation() -> None:
+    async with AdminHarness(is_admin=True) as harness:
+        harness.admin.set_user_admin_role.return_value = {
+            "updated": False,
+            "reason": "cannot_revoke_self",
+        }
+        response = await harness.client.patch(
+            f"/api/v1/admin/users/{ADMIN_ID}/admin-role",
+            json={"is_admin": False},
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "cannot_revoke_self"
+
+
+@pytest.mark.asyncio
 async def test_entitlements_endpoint_returns_plan_usage() -> None:
     entitlements = AsyncMock(spec=EntitlementService)
     entitlements.get_summary.return_value = {

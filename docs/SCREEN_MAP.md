@@ -141,10 +141,14 @@ em Perfil.
 ```sql
 insert into public.user_roles (user_id, role)
 values ('SEU-UUID', 'admin')
-on conflict (user_id, role) do update set role = excluded.role;
+on conflict (user_id) do update set role = excluded.role;
 ```
 
 3. Abrir `/#/admin` logado, com backend disponível.
+
+Admins adicionais podem ser promovidos pelo painel (**Usuários** → selecionar
+conta → **Tornar admin**). Remover admin também está no painel (com proteção
+contra remover o último admin ou a própria conta).
 
 Instruções completas: [`README.md`](../README.md#administration).
 
@@ -164,11 +168,12 @@ Login (#/login)
 | Aba | Objetivo | API principal |
 |---|---|---|
 | Visão geral | Totais, DAU/WAU/MAU, distribuição por plano/idioma/nível, custo LLM | `GET /api/v1/admin/overview` |
-| Usuários | Busca, detalhe, consumo diário, trocar plano, suspender/reativar | `GET/POST /api/v1/admin/users…` |
+| Usuários | Busca, detalhe, consumo diário, trocar plano, promover/remover admin, suspender/reativar | `GET/PATCH /api/v1/admin/users…` |
 | Features | Uso normalizado por feature key | `GET /api/v1/admin/features` |
 | Auditoria | Mutações administrativas rastreáveis | `GET /api/v1/admin/audit` |
 
-Ações sensíveis (plano, suspensão) geram registro em `admin_audit_logs`. O
+Ações sensíveis (plano, privilégios admin, suspensão) geram registro em
+`admin_audit_logs`. O
 conteúdo privado das conversas **não** é exposto casualmente no painel.
 
 Rotas separadas (`/admin/users`, `/admin/plans`, …) podem ser introduzidas no

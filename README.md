@@ -228,13 +228,18 @@ then run in the Supabase SQL editor (or any trusted `service_role` session):
 ```sql
 insert into public.user_roles (user_id, role)
 values ('00000000-0000-0000-0000-000000000000', 'admin')
-on conflict (user_id, role) do update set role = excluded.role;
+on conflict (user_id) do update set role = excluded.role;
 ```
 
 Replace the UUID with your user id from **Authentication → Users**. There is no
 public admin signup.
 
-Revoke admin access:
+After the first admin exists, additional administrators can be promoted from the
+admin panel (**Users** tab → select user → **Tornar admin**). Revoking admin
+access is also available there (except for the last remaining admin and your
+own account).
+
+Revoke admin access manually (SQL):
 
 ```sql
 delete from public.user_roles
@@ -245,8 +250,8 @@ where user_id = '00000000-0000-0000-0000-000000000000'
 ### What the panel provides
 
 - Overview: users, activity (DAU/WAU), plan distribution, LLM usage and cost
-- Users: search, daily usage, change plan (`free` / `premium`), suspend or
-  reactivate accounts
+- Users: search, daily usage, change plan (`free` / `premium`), promote or
+  revoke admin, suspend or reactivate accounts
 - Features: normalized usage by feature key
 - Audit: administrative mutations from `admin_audit_logs`
 

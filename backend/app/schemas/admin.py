@@ -55,6 +55,7 @@ class AdminUserSummary(BaseModel):
     onboarding_completed: bool | None = None
     plan_id: str | None = None
     subscription_status: str | None = None
+    is_admin: bool = False
     created_at: datetime | None = None
     target_language: str | None = None
     current_level: str | None = None
@@ -92,3 +93,7 @@ class ChangePlanRequest(BaseModel):
 class SetAccountStatusRequest(BaseModel):
     status: str = Field(pattern="^(active|suspended)$")
     reason: str | None = Field(default=None, max_length=500)
+
+
+class SetUserAdminRoleRequest(BaseModel):
+    is_admin: bool

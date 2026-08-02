@@ -105,6 +105,23 @@ class AdminService:
         )
         return result if isinstance(result, dict) else {"updated": False}
 
+    async def set_user_admin_role(
+        self,
+        *,
+        actor_user_id: UUID,
+        target_user_id: UUID,
+        is_admin: bool,
+    ) -> dict[str, Any]:
+        result = await self._rpc(
+            "admin_set_user_admin_role",
+            {
+                "p_actor_user_id": str(actor_user_id),
+                "p_target_user_id": str(target_user_id),
+                "p_is_admin": is_admin,
+            },
+        )
+        return result if isinstance(result, dict) else {"updated": False}
+
     async def set_account_status(
         self,
         *,

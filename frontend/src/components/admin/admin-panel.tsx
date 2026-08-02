@@ -13,6 +13,7 @@ import {
 
 import {
   changeAdminUserPlan,
+  changeAdminUserRole,
   changeAdminUserStatus,
   loadAdminAudit,
   loadAdminFeatures,
@@ -164,7 +165,7 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
   };
 
   const applyPlan = async (planId: "free" | "premium") => {
-    if (!selectedUserId) return;
+    if (!selectedUserId || selectedUser?.plan_id === planId) return;
     setActionMessage("");
     try {
       await changeAdminUserPlan(accessToken, selectedUserId, planId);
@@ -173,6 +174,25 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
       if (tab === "users") setUsers(await searchAdminUsers(accessToken, query));
     } catch (caught) {
       setError(caught instanceof ApiClientError ? caught.message : "Falha ao alterar plano.");
+    }
+  };
+
+  const applyAdminRole = async (isAdmin: boolean) => {
+    if (!selectedUserId || selectedUser?.is_admin === isAdmin) return;
+    setActionMessage("");
+    try {
+      await changeAdminUserRole(accessToken, selectedUserId, isAdmin);
+      setActionMessage(isAdmin ? "Usuário promovido a administrador." : "Privilégios de admin removidos.");
+      await openUser(selectedUserId);
+    } catch (caught) {
+      const message = caught instanceof ApiClientError ? caught.message : "Falha ao alterar privilégios.";
+      if (message.includes("cannot_revoke_self")) {
+        setError("Você não pode remover seu próprio acesso de administrador.");
+      } else if (message.includes("last_admin")) {
+        setError("Não é possível remover o último administrador do sistema.");
+      } else {
+        setError(message);
+      }
     }
   };
 
@@ -298,18 +318,57 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
                 <ul className="admin-meta">
                   <li><span>Plano</span><strong>{planLabel(selectedUser.plan_id)}</strong></li>
                   <li><span>Status</span><strong>{selectedUser.account_status}</strong></li>
+                  <li><span>Admin</span><strong>{selectedUser.is_admin ? "Sim" : "Não"}</strong></li>
                   <li><span>Conversas</span><strong>{selectedUser.conversation_sessions}</strong></li>
                   <li><span>Concluídas</span><strong>{selectedUser.conversation_completed}</strong></li>
                   <li><span>Custo LLM</span><strong>${selectedUser.llm_cost_usd.toFixed(2)}</strong></li>
                 </ul>
                 <div className="admin-actions">
-                  <button type="button" onClick={() => void applyPlan("free")}>Definir Free</button>
-                  <button type="button" onClick={() => void applyPlan("premium")}>Definir Premium</button>
-                  {selectedUser.account_status === "active" ? (
-                    <button type="button" className="danger" onClick={() => void applyStatus("suspended")}>Suspender</button>
-                  ) : (
-                    <button type="button" onClick={() => void applyStatus("active")}>Reativar</button>
-                  )}
+                  <div className="admin-action-group">
+                    <span className="admin-action-label">Plano</span>
+                    <div className="admin-action-row">
+                      <button
+                        type="button"
+                        className={selectedUser.plan_id === "free" ? "active" : ""}
+                        onClick={() => void applyPlan("free")}
+                      >
+                        Free
+                      </button>
+                      <button
+                        type="button"
+                        className={selectedUser.plan_id === "premium" ? "active" : ""}
+                        onClick={() => void applyPlan("premium")}
+                      >
+                        Premium
+                      </button>
+                    </div>
+                  </div>
+                  <div className="admin-action-group">
+                    <span className="admin-action-label">Privilégios</span>
+                    <div className="admin-action-row">
+                      {selectedUser.is_admin ? (
+                        <button type="button" className="danger" onClick={() => void applyAdminRole(false)}>
+                          Remover admin
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => void applyAdminRole(true)}>
+                          Tornar admin
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="admin-action-group">
+                    <span className="admin-action-label">Conta</span>
+                    <div className="admin-action-row">
+                      {selectedUser.account_status === "active" ? (
+                        <button type="button" className="danger" onClick={() => void applyStatus("suspended")}>
+                          Suspender
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => void applyStatus("active")}>Reativar</button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </>
             )}

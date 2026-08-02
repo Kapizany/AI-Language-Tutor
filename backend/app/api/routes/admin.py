@@ -11,6 +11,7 @@ from app.schemas.admin import (
     AdminUserSummary,
     ChangePlanRequest,
     SetAccountStatusRequest,
+    SetUserAdminRoleRequest,
 )
 from app.schemas.auth import AuthenticatedUser
 from app.services.admin import AdminServiceError
@@ -107,6 +108,32 @@ async def admin_change_plan(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("reason", "Plan update failed."),
+        )
+    return result
+
+
+@router.patch("/users/{user_id}/admin-role")
+async def admin_change_admin_role(
+    user_id: UUID,
+    payload: SetUserAdminRoleRequest,
+    admin_service: AdminDependency,
+    user: AdminUserDependency,
+) -> dict[str, object]:
+    try:
+        result = await admin_service.set_user_admin_role(
+            actor_user_id=user.id,
+            target_user_id=user_id,
+            is_admin=payload.is_admin,
+        )
+    except AdminServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    if not result.get("updated"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("reason", "Admin role update failed."),
         )
     return result
 

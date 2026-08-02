@@ -111,7 +111,7 @@ async def test_start_conversation_reports_the_daily_limit_in_portuguese() -> Non
         )
 
     assert response.status_code == 429
-    assert "três conversas de hoje" in response.json()["detail"]
+    assert "limite diário de conversas" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

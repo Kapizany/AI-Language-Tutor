@@ -1,9 +1,10 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.api.dependencies import AccountDependency
+from app.api.dependencies import AccountDependency, EntitlementDependency
 from app.core.security import get_current_user
+from app.schemas.admin import EntitlementsSummary
 from app.schemas.auth import AuthenticatedUser, DeleteAccountRequest
 from app.services.account import AccountDeletionError, AccountDeletionUnavailableError
 
@@ -15,6 +16,17 @@ async def me(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> AuthenticatedUser:
     return user
+
+
+@router.get("/account/entitlements", response_model=EntitlementsSummary)
+async def entitlements(
+    entitlements_service: EntitlementDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> EntitlementsSummary:
+    payload: dict[str, Any] = await entitlements_service.get_summary(user.id)
+    if not payload.get("found", False):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
+    return EntitlementsSummary.model_validate(payload)
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)

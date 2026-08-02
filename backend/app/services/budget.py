@@ -10,6 +10,10 @@ class BudgetExceededError(RuntimeError):
     pass
 
 
+class AccountSuspendedError(RuntimeError):
+    pass
+
+
 class VoiceConsentRequiredError(RuntimeError):
     pass
 
@@ -68,7 +72,10 @@ class BudgetService:
         response.raise_for_status()
         result = response.json()
         if not result.get("allowed", False):
-            raise BudgetExceededError(result.get("reason", "Budget limit reached"))
+            reason = result.get("reason", "Budget limit reached")
+            if reason == "account_suspended":
+                raise AccountSuspendedError(reason)
+            raise BudgetExceededError(reason)
 
     async def authorize_transcription(self, *, user_id: UUID) -> None:
         if not self.enabled:
@@ -87,6 +94,8 @@ class BudgetService:
         reason = result.get("reason")
         if reason == "voice_consent_required":
             raise VoiceConsentRequiredError("Voice processing consent is required")
+        if reason == "account_suspended":
+            raise AccountSuspendedError(reason)
         raise BudgetExceededError("Too many transcription attempts. Try again shortly.")
 
     async def finalize(

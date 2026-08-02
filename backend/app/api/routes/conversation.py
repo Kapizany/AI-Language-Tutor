@@ -19,7 +19,7 @@ from app.schemas.llm import (
     TutorReply,
     UsageSummary,
 )
-from app.services.budget import BudgetExceededError
+from app.services.budget import AccountSuspendedError, BudgetExceededError
 from app.services.conversation import (
     CachedGeneration,
     ConversationRejectedError,
@@ -52,7 +52,11 @@ _REJECTION_MESSAGES: dict[str, tuple[int, str]] = {
     ),
     "daily_session_limit": (
         status.HTTP_429_TOO_MANY_REQUESTS,
-        "Você já usou as três conversas de hoje. Volte amanhã para continuar.",
+        "Você atingiu o limite diário de conversas do seu plano.",
+    ),
+    "account_suspended": (
+        status.HTTP_403_FORBIDDEN,
+        "Sua conta está suspensa. Entre em contato com o suporte.",
     ),
     "session_not_found": (
         status.HTTP_404_NOT_FOUND,
@@ -229,6 +233,11 @@ async def send_conversation_message(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),
         ) from exc
+    except AccountSuspendedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sua conta está suspensa. Entre em contato com o suporte.",
+        ) from exc
 
     started_at = time.monotonic()
     try:
@@ -387,6 +396,11 @@ async def complete_conversation(
                 "O limite de uso foi atingido, então o resumo não pôde ser gerado. "
                 "Sua conversa continua salva."
             ),
+        ) from exc
+    except AccountSuspendedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sua conta está suspensa. Entre em contato com o suporte.",
         ) from exc
 
     started_at = time.monotonic()

@@ -11,6 +11,7 @@ const privateScreens = new Set([
   "progress",
   "profile",
   "privacy",
+  "admin",
 ]);
 
 export function resolveDestination(
@@ -21,6 +22,7 @@ export function resolveDestination(
   const requiresAuthentication = privateScreens.has(requested) || requested === "onboarding";
 
   if (requiresAuthentication && !authenticated) return "login";
+  if (requested === "admin") return "admin";
   if (privateScreens.has(requested) && !onboardingCompleted) return "onboarding";
   if (requested === "onboarding" && onboardingCompleted) return "dashboard";
   return requested;

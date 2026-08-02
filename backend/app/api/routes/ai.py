@@ -13,7 +13,7 @@ from app.schemas.llm import (
     TutorReplyResponse,
     UsageSummary,
 )
-from app.services.budget import BudgetExceededError
+from app.services.budget import AccountSuspendedError, BudgetExceededError
 from app.services.gateway import GatewayUnavailableError
 from app.services.providers.common import (
     TUTOR_SYSTEM_PROMPT,
@@ -56,6 +56,11 @@ async def tutor_reply(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),
+        ) from exc
+    except AccountSuspendedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sua conta está suspensa. Entre em contato com o suporte.",
         ) from exc
 
     context = ConversationPromptContext(

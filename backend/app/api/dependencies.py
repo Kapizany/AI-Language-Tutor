@@ -1,10 +1,14 @@
 from typing import Annotated, cast
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 
+from app.core.security import get_current_user
+from app.schemas.auth import AuthenticatedUser
 from app.services.account import AccountService
+from app.services.admin import AdminService
 from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
+from app.services.entitlements import EntitlementService
 from app.services.gateway import LLMGateway
 from app.services.transcription import TranscriptionService
 
@@ -29,8 +33,38 @@ async def get_transcription_service(request: Request) -> TranscriptionService:
     return cast(TranscriptionService, request.app.state.transcription_service)
 
 
+async def get_entitlement_service(request: Request) -> EntitlementService:
+    return cast(EntitlementService, request.app.state.entitlement_service)
+
+
+async def get_admin_service(request: Request) -> AdminService:
+    return cast(AdminService, request.app.state.admin_service)
+
+
+async def get_admin_user(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    entitlements: Annotated[EntitlementService, Depends(get_entitlement_service)],
+) -> AuthenticatedUser:
+    try:
+        is_admin = await entitlements.is_admin(user.id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin authorization is temporarily unavailable.",
+        ) from exc
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return user
+
+
 GatewayDependency = Annotated[LLMGateway, Depends(get_gateway)]
 BudgetDependency = Annotated[BudgetService, Depends(get_budget_service)]
 AccountDependency = Annotated[AccountService, Depends(get_account_service)]
 ConversationDependency = Annotated[ConversationService, Depends(get_conversation_service)]
 TranscriptionDependency = Annotated[TranscriptionService, Depends(get_transcription_service)]
+EntitlementDependency = Annotated[EntitlementService, Depends(get_entitlement_service)]
+AdminDependency = Annotated[AdminService, Depends(get_admin_service)]
+AdminUserDependency = Annotated[AuthenticatedUser, Depends(get_admin_user)]

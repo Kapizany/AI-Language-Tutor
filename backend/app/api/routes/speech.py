@@ -8,7 +8,11 @@ from app.api.dependencies import BudgetDependency, TranscriptionDependency
 from app.core.security import get_current_user
 from app.schemas.auth import AuthenticatedUser
 from app.schemas.llm import SpeechTranscriptionResponse, TargetLanguage, UsageSummary
-from app.services.budget import BudgetExceededError, VoiceConsentRequiredError
+from app.services.budget import (
+    AccountSuspendedError,
+    BudgetExceededError,
+    VoiceConsentRequiredError,
+)
 from app.services.transcription import InvalidAudioError, TranscriptionUnavailableError
 
 router = APIRouter(prefix="/api/v1/speech", tags=["speech"])
@@ -63,6 +67,11 @@ async def transcribe_audio(
         ) from exc
     except BudgetExceededError as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
+    except AccountSuspendedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sua conta está suspensa. Entre em contato com o suporte.",
+        ) from exc
 
     audio = bytearray()
     async for chunk in request.stream():
@@ -96,6 +105,11 @@ async def transcribe_audio(
         )
     except BudgetExceededError as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
+    except AccountSuspendedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sua conta está suspensa. Entre em contato com o suporte.",
+        ) from exc
 
     started_at = time.monotonic()
     try:

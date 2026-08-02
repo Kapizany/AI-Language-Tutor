@@ -45,7 +45,9 @@ import {
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
+import { AdminPanel } from "@/components/admin/admin-panel";
 import { AppHeader } from "@/components/app-header";
+import { AppNav } from "@/components/app-nav";
 import {
   Conversation,
   ConversationSummary,
@@ -59,6 +61,7 @@ import {
   recommendScenario,
   type ScenarioCatalogItem,
 } from "@/lib/conversation";
+import { loadEntitlements, planLabel, type EntitlementsSummary } from "@/lib/entitlements";
 import {
   goalLabels,
   languageDetails,
@@ -122,6 +125,7 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "progress", label: "Progresso", icon: BarChart3, group: "Progresso" },
   { id: "profile", label: "Perfil", icon: Settings, group: "Conta" },
   { id: "privacy", label: "Dados e privacidade", icon: ShieldCheck, group: "Conta" },
+  { id: "admin", label: "Admin", icon: ShieldCheck, group: "Operação" },
 ];
 
 const appScreens = new Set<ScreenId>([
@@ -997,12 +1001,14 @@ function Profile({
   email,
   preferences,
   saveSettings,
+  session,
 }: {
   go: (id: ScreenId) => void;
   displayName: string;
   email: string;
   preferences: LearnerPreferences | null;
   saveSettings: (name: string, preferences: LearnerPreferences) => Promise<AuthFeedback>;
+  session: Session | null;
 }) {
   const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
   const [name, setName] = useState(displayName);
@@ -1018,6 +1024,24 @@ function Profile({
   });
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [saving, setSaving] = useState(false);
+  const [entitlements, setEntitlements] = useState<EntitlementsSummary | null>(null);
+  const [entitlementsError, setEntitlementsError] = useState("");
+
+  useEffect(() => {
+    if (!session?.access_token || section !== "plan") return;
+    let active = true;
+    const load = async () => {
+      setEntitlementsError("");
+      try {
+        const summary = await loadEntitlements(session.access_token);
+        if (active) setEntitlements(summary);
+      } catch {
+        if (active) setEntitlementsError("Não foi possível carregar o uso do seu plano.");
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [section, session?.access_token]);
 
   const save = async () => {
     setSaving(true);
@@ -1045,7 +1069,29 @@ function Profile({
             <label>Idioma estudado<select value={draft.targetLanguage} onChange={(event) => setDraft({...draft, targetLanguage: event.target.value as OnboardingData["targetLanguage"]})}>{Object.entries(languageDetails).map(([value, item]) => <option key={value} value={value}>{item.flag} {item.name}</option>)}</select></label>
             <label>Nível atual<select value={draft.currentLevel} onChange={(event) => setDraft({...draft, currentLevel: event.target.value as OnboardingData["currentLevel"]})}>{selectableLevels.map((value) => <option key={value} value={value}>{levelLabels[value]}</option>)}</select></label>
           </div></section>}
-          {section === "plan" && <section><h3>Plano e metas</h3><div className="form-grid">
+          {section === "plan" && <section><h3>Plano e metas</h3>
+            {entitlements && (
+              <div className="usage-grid" aria-label="Uso diário do plano">
+                <article className="usage-card">
+                  <span>Plano atual</span>
+                  <strong>{planLabel(entitlements.plan_id)}</strong>
+                </article>
+                <article className="usage-card">
+                  <span>Conversas hoje</span>
+                  <strong>{entitlements.usage.conversation_sessions.used} / {entitlements.usage.conversation_sessions.limit}</strong>
+                </article>
+                <article className="usage-card">
+                  <span>Requisições de IA</span>
+                  <strong>{entitlements.usage.llm_requests.used} / {entitlements.usage.llm_requests.limit}</strong>
+                </article>
+                <article className="usage-card">
+                  <span>Transcrições hoje</span>
+                  <strong>{entitlements.usage.transcriptions.used} / {entitlements.usage.transcriptions.limit}</strong>
+                </article>
+              </div>
+            )}
+            {entitlementsError && <div className="form-message form-error" role="alert">{entitlementsError}</div>}
+            <div className="form-grid">
             <label>Objetivo principal<select value={draft.learningGoal} onChange={(event) => setDraft({...draft, learningGoal: event.target.value as OnboardingData["learningGoal"]})}>{Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Minutos por dia<select value={draft.studyMinutesPerDay} onChange={(event) => setDraft({...draft, studyMinutesPerDay: Number(event.target.value) as OnboardingData["studyMinutesPerDay"]})}>{[10,20,30,60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutos</option>)}</select></label>
             <label>Dias por semana<select value={draft.studyDaysPerWeek} onChange={(event) => setDraft({...draft, studyDaysPerWeek: Number(event.target.value)})}>{[1,2,3,4,5,6,7].map((days) => <option key={days} value={days}>{days} {days === 1 ? "dia" : "dias"}</option>)}</select></label>
@@ -1848,43 +1894,6 @@ function LearningCenter({
   );
 }
 
-function AppNav({
-  current,
-  go,
-  displayName,
-  signOut,
-}: {
-  current: ScreenId;
-  go: (id: ScreenId) => void;
-  displayName: string;
-  signOut: () => Promise<void>;
-}) {
-  const firstName = displayName.trim().split(/\s+/)[0] || "Aluno";
-  const navItems: Array<[ScreenId, string, IconType]> = [
-    ["dashboard", "Início", Home],
-    ["learn", "Aprender", GraduationCap],
-    ["plan", "Minha rotina", Map],
-    ["scenarios", "Conversar", MessageCircle],
-    ["sessions", "Conversas", History],
-    ["vocabulary", "Revisar", RotateCcw],
-    ["progress", "Progresso", BarChart3],
-  ];
-  return (
-    <>
-      <aside className="app-sidebar">
-        <Brand onClick={() => go("dashboard")}/>
-        <nav>{navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label}</span></button>)}</nav>
-        <div className="sidebar-bottom"><button onClick={() => go("profile")}><Settings/><span>Configurações</span></button><div className="mini-profile"><button className="mini-profile-link" onClick={() => go("profile")} title="Meu perfil"><span>{firstName.slice(0, 2).toUpperCase()}</span><div><strong>{firstName}</strong><small>Meu perfil</small></div></button><button className="signout-button" onClick={signOut} title="Sair" aria-label="Sair"><LogIn/></button></div></div>
-      </aside>
-      <nav className="mobile-nav">
-        {navItems.map(([id,label,Icon])=><button key={id} className={current === id ? "active" : ""} onClick={() => go(id)}><Icon/><span>{label === "Minha rotina" ? "Rotina" : label}</span></button>)}
-        <button className={current === "profile" ? "active" : ""} onClick={() => go("profile")}><Settings/><span>Ajustes</span></button>
-        <button onClick={signOut} title="Sair"><LogIn/><span>Sair</span></button>
-      </nav>
-    </>
-  );
-}
-
 function PrototypeNavigator({
   current,
   go,
@@ -2348,15 +2357,27 @@ export default function ProductPrototype() {
       case "vocabulary": return <LearningCenter key="review" displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
-      case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings}/>;
+      case "profile": return <Profile go={go} displayName={displayName} email={session?.user.email || ""} preferences={preferences} saveSettings={saveSettings} session={session}/>;
       case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
+      case "admin": return session ? <AdminPanel session={session} go={go}/> : null;
     }
   })();
 
   return (
-    <div className={appScreens.has(screen) ? "app-shell" : "public-page"}>
+    <div className={appScreens.has(screen) ? "app-shell" : screen === "admin" ? "public-page admin-page" : "public-page"}>
+      {appScreens.has(screen) && (
+        <a className="skip-link" href="#app-main">
+          Ir para o conteúdo
+        </a>
+      )}
       {appScreens.has(screen) && screen !== "conversation" && <AppNav current={screen} go={go} displayName={displayName} signOut={signOut}/>}
-      <div className={appScreens.has(screen) && screen !== "conversation" ? "app-main" : "full-main"}>{content}</div>
+      <div
+        id="app-main"
+        tabIndex={-1}
+        className={appScreens.has(screen) && screen !== "conversation" ? "app-main" : "full-main"}
+      >
+        {content}
+      </div>
       {process.env.NODE_ENV === "development" && <PrototypeNavigator current={screen} go={go}/>}
     </div>
   );

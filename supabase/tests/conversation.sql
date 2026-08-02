@@ -309,6 +309,10 @@ begin
   set max_learner_messages_per_session = 1
   where id = true;
 
+  update public.plan_entitlements
+  set metadata = jsonb_build_object('max_learner_messages_per_session', 1)
+  where plan_id = 'free' and feature_key = 'conversation_session';
+
   active_session_id := (
     public.start_conversation_session(
       '30000000-0000-0000-0000-000000000002', 'coffee', 'es', 'B1'

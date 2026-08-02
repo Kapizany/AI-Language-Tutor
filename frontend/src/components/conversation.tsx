@@ -454,7 +454,7 @@ export function Conversation({
       <div className="conversation-screen">
         <header className="conversation-header">
           <button onClick={goBack} aria-label="Voltar para os cenários">
-            <ArrowLeft />
+            <ArrowLeft aria-hidden="true" focusable="false" />
           </button>
           <div className="conversation-title">
             <strong>{scenario.title}</strong>
@@ -477,7 +477,7 @@ export function Conversation({
       <div className="conversation-screen conversation-loading-screen">
         <header className="conversation-header">
           <button onClick={goBack} aria-label="Voltar para os cenários">
-            <ArrowLeft />
+            <ArrowLeft aria-hidden="true" focusable="false" />
           </button>
           <div className="conversation-title">
             <span className="mini-avatar">Lu</span>
@@ -516,7 +516,7 @@ export function Conversation({
     <div className="conversation-screen">
       <header className="conversation-header">
         <button onClick={() => void leaveWithoutSummary()} aria-label="Voltar para os cenários">
-          <ArrowLeft />
+          <ArrowLeft aria-hidden="true" focusable="false" />
         </button>
         <div className="conversation-title">
           <span className="mini-avatar">Lu</span>
@@ -528,7 +528,7 @@ export function Conversation({
           </div>
         </div>
         <div className={`session-timer${overPlannedTime ? " session-timer-over" : ""}`}>
-          <Clock3 />
+          <Clock3 aria-hidden="true" focusable="false" />
           <span aria-label="Tempo de conversa">{formatElapsed(elapsedSeconds)}</span>
           <small>de {conversation.planned_minutes} min</small>
         </div>
@@ -574,21 +574,21 @@ export function Conversation({
               >
                 {message.role === "tutor" && <div className="mini-avatar">Lu</div>}
                 <div>
-                  <span>{message.content}</span>
+                  <span lang={targetLanguage}>{message.content}</span>
                 </div>
               </div>
               {message.correction && (
                 <div className="inline-feedback compact-feedback">
                   <div className="feedback-title">
-                    <CheckCircle2 />
+                    <CheckCircle2 aria-hidden="true" focusable="false" />
                     <strong>{severityLabels[message.correction.severity] || "Uma correção"}</strong>
                   </div>
                   <div className="compare">
-                    <del>{message.correction.original}</del>
-                    <ArrowRight size={15} />
-                    <ins>{message.correction.corrected}</ins>
+                    <del lang={targetLanguage}>{message.correction.original}</del>
+                    <ArrowRight size={15} aria-hidden="true" focusable="false" />
+                    <ins lang={targetLanguage}>{message.correction.corrected}</ins>
                   </div>
-                  <p>{message.correction.explanation_pt_br}</p>
+                  <p lang="pt-BR">{message.correction.explanation_pt_br}</p>
                 </div>
               )}
             </div>
@@ -615,7 +615,7 @@ export function Conversation({
                   onClick={() => void send(retryText, retryRequestId || undefined)}
                   disabled={sending}
                 >
-                  Tentar novamente <RotateCcw size={14} />
+                  Tentar novamente <RotateCcw size={14} aria-hidden="true" focusable="false" />
                 </Button>
               )}
             </div>
@@ -641,30 +641,36 @@ export function Conversation({
                     setShowHint(true);
                   }}
                 >
-                  <Sparkles size={15} /> Preciso de uma dica
+                  <Sparkles size={15} aria-hidden="true" focusable="false" /> Preciso de uma dica
                 </button>
-                <button disabled title="Disponível em uma etapa futura">
-                  <Languages size={15} /> Traduzir pergunta
+                <button
+                  type="button"
+                  disabled
+                  aria-label="Traduzir pergunta (disponível em uma etapa futura)"
+                >
+                  <Languages size={15} aria-hidden="true" focusable="false" /> Traduzir pergunta
                 </button>
                 {sending && (
-                  <button className="cancel-generation" onClick={cancelGeneration}>
-                    <X size={15} /> Cancelar
+                  <button type="button" className="cancel-generation" onClick={cancelGeneration}>
+                    <X size={15} aria-hidden="true" focusable="false" /> Cancelar
                   </button>
                 )}
               </div>
               {showHint && (
                 <div className="conversation-hint" role="status">
                   <div>
-                    <Sparkles/>
+                    <Sparkles aria-hidden="true" focusable="false" />
                     <div>
                       <strong>Uma ideia para continuar</strong>
-                      <p>
+                      <p lang="pt-BR">
                         {scenario.goals[
                           (conversation.learner_message_count + hintIndex) % scenario.goals.length
                         ]}
                       </p>
                     </div>
-                    <button onClick={() => setShowHint(false)} aria-label="Fechar dica"><X/></button>
+                    <button type="button" onClick={() => setShowHint(false)} aria-label="Fechar dica">
+                      <X aria-hidden="true" focusable="false" />
+                    </button>
                   </div>
                   <button
                     type="button"
@@ -722,7 +728,7 @@ export function Conversation({
                   }}
                   onContextMenu={(event) => event.preventDefault()}
                 >
-                  <Mic2 />
+                  <Mic2 aria-hidden="true" focusable="false" />
                 </button>
                 <textarea
                   aria-label="Responder"
@@ -744,7 +750,7 @@ export function Conversation({
                   onClick={() => void send(answer)}
                   aria-label="Enviar mensagem"
                 >
-                  <ArrowRight />
+                  <ArrowRight aria-hidden="true" focusable="false" />
                 </button>
               </div>
               {showVoiceConsent && (

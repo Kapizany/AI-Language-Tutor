@@ -17,7 +17,8 @@ export type ScreenId =
   | "assessment"
   | "progress"
   | "profile"
-  | "privacy";
+  | "privacy"
+  | "admin";
 
 export type IconType = React.ComponentType<{ size?: number; strokeWidth?: number }>;
 

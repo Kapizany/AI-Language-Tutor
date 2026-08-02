@@ -56,9 +56,9 @@ jobs:
 
       - name: Validate required configuration
         env:
-          MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
-          MERCADOPAGO_PUBLIC_KEY: ${{ secrets.MERCADOPAGO_PUBLIC_KEY }}
-          MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
+          ASAAS_API_KEY: ${{ secrets.ASAAS_API_KEY }}
+          ASAAS_WEBHOOK_ACCESS_TOKEN: ${{ secrets.ASAAS_WEBHOOK_ACCESS_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           test -n "$TF_VAR_google_project_id"
           test -n "$TF_VAR_google_region"
@@ -72,9 +72,9 @@ jobs:
           test -n "$TF_VAR_supabase_database_password"
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$SUPABASE_ACCESS_TOKEN"
-          test -n "$MERCADOPAGO_ACCESS_TOKEN"
-          test -n "$MERCADOPAGO_PUBLIC_KEY"
-          test -n "$MERCADOPAGO_WEBHOOK_SECRET"
+          test -n "$ASAAS_API_KEY"
+          test -n "$ASAAS_WEBHOOK_ACCESS_TOKEN"
+          test -n "$RESEND_API_KEY"
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -124,18 +124,18 @@ jobs:
         working-directory: infra/terraform
         run: terraform apply -auto-approve -target=google_secret_manager_secret.backend
 
-      - name: Add Mercado Pago secret versions
+      - name: Add Asaas and Resend secret versions
         env:
-          MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
-          MERCADOPAGO_PUBLIC_KEY: ${{ secrets.MERCADOPAGO_PUBLIC_KEY }}
-          MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
+          ASAAS_API_KEY: ${{ secrets.ASAAS_API_KEY }}
+          ASAAS_WEBHOOK_ACCESS_TOKEN: ${{ secrets.ASAAS_WEBHOOK_ACCESS_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
-          printf '%s' "$MERCADOPAGO_ACCESS_TOKEN" |
-            gcloud secrets versions add "mercadopago-access-token-${TF_VAR_environment}" --data-file=-
-          printf '%s' "$MERCADOPAGO_PUBLIC_KEY" |
-            gcloud secrets versions add "mercadopago-public-key-${TF_VAR_environment}" --data-file=-
-          printf '%s' "$MERCADOPAGO_WEBHOOK_SECRET" |
-            gcloud secrets versions add "mercadopago-webhook-secret-${TF_VAR_environment}" --data-file=-
+          printf '%s' "$ASAAS_API_KEY" |
+            gcloud secrets versions add "asaas-api-key-${TF_VAR_environment}" --data-file=-
+          printf '%s' "$ASAAS_WEBHOOK_ACCESS_TOKEN" |
+            gcloud secrets versions add "asaas-webhook-access-token-${TF_VAR_environment}" --data-file=-
+          printf '%s' "$RESEND_API_KEY" |
+            gcloud secrets versions add "resend-api-key-${TF_VAR_environment}" --data-file=-
 
       - name: Plan
         working-directory: infra/terraform

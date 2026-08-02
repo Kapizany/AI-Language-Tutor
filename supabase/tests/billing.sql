@@ -19,25 +19,27 @@ insert into public.learner_preferences (
 )
 values ('21000000-0000-0000-0000-000000000001', 'en', 'A1', 'conversation', 10, 5);
 
--- Active premium via Mercado Pago
+-- Active premium via Asaas payment confirmation
 do $$
 declare
   result jsonb;
   plan_id text;
 begin
   result := public.sync_billing_subscription(
-    '21000000-0000-0000-0000-000000000001',
-    'mp-preapproval-active',
-    'mp-payer-1',
-    'authorized',
-    'monthly',
-    null
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'asaas-sub-active'::text,
+    'asaas-cus-1'::text,
+    'confirmed'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'asaas'::text,
+    'card'::text
   );
   if coalesce(result ->> 'updated', 'false') <> 'true' then
     raise exception 'Billing failure: premium activation failed';
   end if;
 
-  plan_id := public.resolve_user_plan('21000000-0000-0000-0000-000000000001');
+  plan_id := public.resolve_user_plan('21000000-0000-0000-0000-000000000001'::uuid);
   if plan_id <> 'premium' then
     raise exception 'Billing failure: active premium not resolved';
   end if;
@@ -52,12 +54,14 @@ declare
   grace_end timestamptz := now() + interval '10 days';
 begin
   result := public.sync_billing_subscription(
-    '21000000-0000-0000-0000-000000000001',
-    'mp-preapproval-active',
-    'mp-payer-1',
-    'cancelled',
-    'monthly',
-    grace_end
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'asaas-sub-active'::text,
+    'asaas-cus-1'::text,
+    'cancelled'::text,
+    'monthly'::text,
+    grace_end,
+    'asaas'::text,
+    'card'::text
   );
   if coalesce(result ->> 'updated', 'false') <> 'true' then
     raise exception 'Billing failure: cancellation sync failed';
@@ -112,16 +116,61 @@ begin
   end if;
 
   first_event := public.process_billing_event(
-    'mercadopago', 'test-event-1',
-    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}',
-    '21000000-0000-0000-0000-000000000001',
-    'mp-preapproval-event', 'mp-payer-1', 'authorized', 'monthly', null
+    'asaas'::text,
+    'test-event-asaas-1'::text,
+    '{"status":"confirmed","dateCreated":"2026-08-02T12:00:00Z"}'::jsonb,
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'asaas-sub-event'::text,
+    'asaas-cus-1'::text,
+    'confirmed'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'asaas'::text,
+    'card'::text
   );
   duplicate_event := public.process_billing_event(
-    'mercadopago', 'test-event-1',
-    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}',
-    '21000000-0000-0000-0000-000000000001',
-    'mp-preapproval-event', 'mp-payer-1', 'authorized', 'monthly', null
+    'asaas'::text,
+    'test-event-asaas-1'::text,
+    '{"status":"confirmed","dateCreated":"2026-08-02T12:00:00Z"}'::jsonb,
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'asaas-sub-event'::text,
+    'asaas-cus-1'::text,
+    'confirmed'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'asaas'::text,
+    'card'::text
+  );
+  if coalesce(first_event ->> 'updated', 'false') <> 'true'
+     or coalesce(duplicate_event ->> 'reason', '') <> 'duplicate_event' then
+    raise exception 'Billing failure: asaas atomic idempotency failed';
+  end if;
+
+  first_event := public.process_billing_event(
+    'mercadopago'::text,
+    'test-event-1'::text,
+    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}'::jsonb,
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'mp-preapproval-event'::text,
+    'mp-payer-1'::text,
+    'authorized'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'mercadopago'::text,
+    null::text
+  );
+  duplicate_event := public.process_billing_event(
+    'mercadopago'::text,
+    'test-event-1'::text,
+    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}'::jsonb,
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'mp-preapproval-event'::text,
+    'mp-payer-1'::text,
+    'authorized'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'mercadopago'::text,
+    null::text
   );
   if coalesce(first_event ->> 'updated', 'false') <> 'true'
      or coalesce(duplicate_event ->> 'reason', '') <> 'duplicate_event' then
@@ -131,7 +180,7 @@ begin
   select started_at, renews_at
   into subscription_started_at, subscription_renews_at
   from public.user_subscriptions
-  where user_id = '21000000-0000-0000-0000-000000000001';
+  where user_id = '21000000-0000-0000-0000-000000000001'::uuid;
 
   if subscription_started_at <> '2026-08-02T12:00:00Z'::timestamptz
      or subscription_renews_at <> '2026-09-02T12:00:00Z'::timestamptz then

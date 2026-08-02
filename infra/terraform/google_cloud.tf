@@ -13,9 +13,9 @@ locals {
     GEMINI_API_KEY             = "gemini-api-key"
     DEEPSEEK_API_KEY           = "deepseek-api-key"
     SUPABASE_SERVICE_ROLE_KEY  = "supabase-service-role-key"
-    MERCADOPAGO_ACCESS_TOKEN   = "mercadopago-access-token"
-    MERCADOPAGO_PUBLIC_KEY     = "mercadopago-public-key"
-    MERCADOPAGO_WEBHOOK_SECRET = "mercadopago-webhook-secret"
+    ASAAS_API_KEY              = "asaas-api-key"
+    ASAAS_WEBHOOK_ACCESS_TOKEN = "asaas-webhook-access-token"
+    RESEND_API_KEY             = "resend-api-key"
   }
 
   backend_environment = {
@@ -37,16 +37,14 @@ locals {
     DEEPSEEK_MODEL                  = "deepseek-v4-flash"
     DEEPSEEK_INPUT_USD_PER_MILLION  = "0.14"
     DEEPSEEK_OUTPUT_USD_PER_MILLION = "0.28"
-    MERCADOPAGO_BILLING_ENABLED     = "true"
-    MERCADOPAGO_MOCK_CHECKOUT       = "false"
-    # Real-credential smoke tests require a real payer identity.
-    MERCADOPAGO_TEST_CHECKOUT      = "false"
-    MERCADOPAGO_NOTIFICATION_URL   = "${var.backend_public_url}/api/v1/billing/webhook"
-    MERCADOPAGO_BACK_URL           = "${var.site_url}/"
-    MERCADOPAGO_MANAGE_URL         = "https://www.mercadopago.com.br/subscriptions"
-    SPEECH_SYNTHESIS_ENABLED       = "true"
-    SPEECH_SYNTHESIS_PROVIDER      = "google_standard"
-    SPEECH_SYNTHESIS_CACHE_VERSION = "2026-08-02-v1"
+    ASAAS_BILLING_ENABLED           = "true"
+    ASAAS_ENVIRONMENT               = "production"
+    ASAAS_MOCK_CHECKOUT             = "false"
+    BILLING_SITE_URL                = "${var.site_url}/"
+    BILLING_EMAIL_FROM              = "Lume Tutor <noreply@caps-labs.com>"
+    SPEECH_SYNTHESIS_ENABLED        = "true"
+    SPEECH_SYNTHESIS_PROVIDER       = "google_standard"
+    SPEECH_SYNTHESIS_CACHE_VERSION  = "2026-08-02-v1"
   }
 }
 

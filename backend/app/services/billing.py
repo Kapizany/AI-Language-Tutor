@@ -5,6 +5,7 @@ import hmac
 import logging
 import re
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -19,13 +20,13 @@ MERCADOPAGO_TEST_PAYER_EMAIL = "test@testuser.com"
 
 PRICING: dict[BillingCycle, dict[str, Any]] = {
     "monthly": {
-        "amount": 1.00,
+        "amount": 5.00,
         "frequency": 1,
         "frequency_type": "months",
         "reason": "Lume Tutor Premium - Mensal",
     },
     "annual": {
-        "amount": 1.00,
+        "amount": 5.00,
         "frequency": 12,
         "frequency_type": "months",
         "reason": "Lume Tutor Premium - Anual",
@@ -246,6 +247,13 @@ class BillingService:
             )
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
 
+        reusable_checkout = await self._load_reusable_checkout(
+            user_id=user_id,
+            billing_cycle=billing_cycle,
+        )
+        if reusable_checkout:
+            return reusable_checkout
+
         reservation = await self._rpc(
             "reserve_billing_checkout_attempt",
             {"p_user_id": str(user_id)},
@@ -404,6 +412,158 @@ class BillingService:
             "checkout_url": str(checkout_url),
             "external_subscription_id": str(preapproval_id),
         }
+
+    async def _load_reusable_checkout(
+        self,
+        *,
+        user_id: UUID,
+        billing_cycle: BillingCycle,
+    ) -> dict[str, str] | None:
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "billing_cycle": f"eq.{billing_cycle}",
+                    "status": "eq.pending",
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            logger.exception(
+                "Reusable checkout lookup transport failed",
+                extra={
+                    "operation": "checkout_reuse",
+                    "provider": "supabase",
+                    "billing_cycle": billing_cycle,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Reusable checkout lookup failed") from exc
+
+        if response.status_code >= 400:
+            logger.error(
+                "Supabase rejected reusable checkout lookup",
+                extra={
+                    "operation": "checkout_reuse",
+                    "provider": "supabase",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                },
+            )
+            raise BillingServiceError("Reusable checkout lookup failed")
+
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            logger.exception(
+                "Reusable checkout lookup returned invalid JSON",
+                extra={
+                    "operation": "checkout_reuse",
+                    "provider": "supabase",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Reusable checkout lookup returned invalid JSON") from exc
+
+        if not isinstance(rows, list) or not rows:
+            return None
+
+        preapproval_id = rows[0].get("external_subscription_id")
+        if not preapproval_id:
+            return None
+
+        try:
+            preapproval = await self.fetch_preapproval(str(preapproval_id))
+        except BillingServiceError:
+            logger.warning(
+                "Pending checkout could not be reused",
+                extra={
+                    "operation": "checkout_reuse",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "reason": "preapproval_lookup_failed",
+                },
+            )
+            return None
+
+        checkout_url = preapproval.get("init_point") or preapproval.get("sandbox_init_point")
+        if str(preapproval.get("status") or "").lower() != "pending" or not checkout_url:
+            return None
+
+        recurring = preapproval.get("auto_recurring")
+        current_amount = (
+            recurring.get("transaction_amount") if isinstance(recurring, dict) else None
+        )
+        expected_amount = PRICING[billing_cycle]["amount"]
+        if not self._amounts_match(current_amount, expected_amount):
+            try:
+                update_response = await self.mp.put(
+                    f"/preapproval/{preapproval_id}",
+                    json={
+                        "auto_recurring": {
+                            "transaction_amount": expected_amount,
+                            "currency_id": "BRL",
+                        }
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.exception(
+                    "Pending checkout amount update transport failed",
+                    extra={
+                        "operation": "checkout_reuse",
+                        "provider": "mercadopago",
+                        "billing_cycle": billing_cycle,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                raise BillingServiceError("Pending checkout amount update failed") from exc
+
+            if update_response.status_code >= 400:
+                logger.error(
+                    "Mercado Pago rejected pending checkout amount update",
+                    extra={
+                        "operation": "checkout_reuse",
+                        "provider": "mercadopago",
+                        "billing_cycle": billing_cycle,
+                        "http_status": update_response.status_code,
+                        "upstream_request_id": update_response.headers.get("x-request-id"),
+                    },
+                )
+                raise BillingServiceError("Pending checkout amount update failed")
+
+            logger.info(
+                "Pending Mercado Pago checkout amount updated",
+                extra={
+                    "operation": "checkout_reuse",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "http_status": update_response.status_code,
+                },
+            )
+
+        logger.info(
+            "Reusing pending Mercado Pago checkout",
+            extra={
+                "operation": "checkout_reuse",
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+            },
+        )
+        return {
+            "checkout_url": str(checkout_url),
+            "external_subscription_id": str(preapproval_id),
+        }
+
+    @staticmethod
+    def _amounts_match(current: Any, expected: Any) -> bool:
+        try:
+            return Decimal(str(current)) == Decimal(str(expected))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
 
     async def _release_checkout_attempt(self, user_id: UUID) -> None:
         try:

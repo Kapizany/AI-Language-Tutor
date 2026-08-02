@@ -1,17 +1,17 @@
 export const PREMIUM_PRICING = {
   monthly: {
-    amount: 1,
+    amount: 5,
     listAmount: 19.9,
     label: "Mensal",
     suffix: "/mês",
     billingNote: "Cobrança mensal recorrente — preço temporário de teste",
   },
   annual: {
-    amount: 1,
+    amount: 5,
     listAmount: 179.1,
     label: "Anual",
     suffix: "/ano",
-    savingsLabel: "R$ 1 para teste",
+    savingsLabel: "R$ 5 para teste",
     billingNote: "Cobrança anual recorrente — preço temporário de teste",
   },
 } as const;
@@ -129,7 +129,7 @@ export const PRICING_FAQ = [
   {
     question: "Qual a diferença entre mensal e anual?",
     answer:
-      "Durante a validação da cobrança real, mensal e anual custam temporariamente R$ 1,00. O mensal renova todo mês; o anual, uma vez por ano.",
+      "Durante a validação da cobrança real, mensal e anual custam temporariamente R$ 5,00. O mensal renova todo mês; o anual, uma vez por ano.",
   },
   {
     question: "O pagamento é seguro?",

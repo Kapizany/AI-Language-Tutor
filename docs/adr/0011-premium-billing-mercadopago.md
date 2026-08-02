@@ -5,7 +5,7 @@ Status: aceito.
 ## Decisão
 
 Assinaturas Premium self-serve usam **Mercado Pago Preapproval**. Durante a
-validação com credenciais reais, mensal e anual cobram temporariamente R$ 1,00.
+validação com credenciais reais, mensal e anual cobram temporariamente R$ 5,00.
 O FastAPI cria checkout, recebe webhooks e sincroniza `user_subscriptions` via
 RPC `sync_billing_subscription`. Os preços comerciais devem ser restaurados
 antes do lançamento.

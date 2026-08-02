@@ -57,7 +57,7 @@ export function AppHeader({
       ? [{
           id: "premium-offer",
           title: "Desbloqueie mais prática",
-          detail: "Premium por R$ 1,00 durante a validação temporária da cobrança.",
+          detail: "Premium por R$ 5,00 durante a validação temporária da cobrança.",
           screen: "pricing" as ScreenId,
         }]
       : []),

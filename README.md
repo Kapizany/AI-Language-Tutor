@@ -257,7 +257,7 @@ where user_id = '00000000-0000-0000-0000-000000000000'
 
 Learners see their own plan usage under **Profile → Plano e metas**
 (`GET /api/v1/account/entitlements`). Premium self-serve checkout uses
-**Mercado Pago** at `#/pricing` (temporarily R$ 1,00 for monthly or annual while
+**Mercado Pago** at `#/pricing` (temporarily R$ 5,00 for monthly or annual while
 real-credential charging is validated). Configure
 `MERCADOPAGO_*` in the backend — see [`docs/adr/0011-premium-billing-mercadopago.md`](docs/adr/0011-premium-billing-mercadopago.md).
 

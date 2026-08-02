@@ -1,5 +1,7 @@
 import hashlib
 import hmac
+import json
+from uuid import UUID
 
 import httpx
 import pytest
@@ -154,5 +156,76 @@ async def test_billing_rpc_accepts_no_content_response() -> None:
     )
     try:
         assert await service._rpc("release_billing_checkout_attempt", {}) is None
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_checkout_is_reused_instead_of_creating_duplicate() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_access_token="APP_USR-production-token",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.mp.aclose()
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            json=[
+                {
+                    "external_subscription_id": "preapproval-123",
+                    "billing_cycle": "annual",
+                    "status": "pending",
+                }
+            ],
+        )
+
+    mercado_pago_methods: list[str] = []
+
+    def mp_handler(request: httpx.Request) -> httpx.Response:
+        mercado_pago_methods.append(request.method)
+        if request.method == "PUT":
+            payload = json.loads(request.content)
+            assert payload["auto_recurring"]["transaction_amount"] == 5.0
+            return httpx.Response(200, request=request, json={"status": "pending"})
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "preapproval-123",
+                "status": "pending",
+                "init_point": "https://www.mercadopago.com.br/subscriptions/checkout",
+                "auto_recurring": {
+                    "transaction_amount": 1,
+                    "currency_id": "BRL",
+                },
+            },
+        )
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(mp_handler),
+    )
+    try:
+        result = await service._load_reusable_checkout(
+            user_id=UUID("00000000-0000-0000-0000-000000000001"),
+            billing_cycle="annual",
+        )
+        assert result == {
+            "checkout_url": "https://www.mercadopago.com.br/subscriptions/checkout",
+            "external_subscription_id": "preapproval-123",
+        }
+        assert mercado_pago_methods == ["GET", "PUT"]
     finally:
         await service.close()

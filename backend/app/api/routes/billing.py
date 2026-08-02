@@ -16,6 +16,7 @@ from app.schemas.billing import (
 )
 from app.services.billing import (
     AlreadyPremiumError,
+    BillingCredentialMismatchError,
     BillingNotConfiguredError,
     BillingRateLimitError,
     BillingServiceError,
@@ -35,6 +36,23 @@ def _raise_billing_http_error(
     unavailable_detail: str,
     failure_detail: str,
 ) -> NoReturn:
+    if isinstance(exc, BillingCredentialMismatchError):
+        logger.warning(
+            "Billing credentials are mismatched between public key and access token",
+            extra={
+                "operation": operation,
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "reason": "credential_mismatch",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Credenciais do Mercado Pago inconsistentes: a public key e o "
+                "access token precisam ser do mesmo ambiente (ambas teste ou ambas produção)."
+            ),
+        ) from exc
     if isinstance(exc, BillingNotConfiguredError):
         logger.warning(
             "Billing unavailable because it is not configured",

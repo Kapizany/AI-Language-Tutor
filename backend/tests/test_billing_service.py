@@ -9,6 +9,7 @@ import pytest
 from app.core.config import Settings
 from app.services.billing import (
     MERCADOPAGO_TEST_PAYER_EMAIL,
+    BillingCredentialMismatchError,
     BillingService,
     is_mercadopago_simulation_webhook,
     parse_mercadopago_webhook_payload,
@@ -103,6 +104,26 @@ async def test_handle_notification_acknowledges_simulation_without_mercado_pago_
             "simulation": True,
             "reason": "simulation_acknowledged",
         }
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_public_key_and_access_token_are_rejected() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_billing_enabled=True,
+            mercadopago_access_token="APP_USR-production-token",
+            mercadopago_public_key="TEST-public-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+        )
+    )
+    try:
+        with pytest.raises(BillingCredentialMismatchError):
+            service._assert_matching_credentials()
     finally:
         await service.close()
 

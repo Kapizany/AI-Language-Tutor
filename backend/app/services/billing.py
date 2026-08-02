@@ -41,6 +41,10 @@ class BillingNotConfiguredError(BillingServiceError):
     pass
 
 
+class BillingCredentialMismatchError(BillingNotConfiguredError):
+    pass
+
+
 class BillingRateLimitError(BillingServiceError):
     def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
         super().__init__(message)
@@ -147,6 +151,16 @@ class BillingService:
             return MERCADOPAGO_TEST_PAYER_EMAIL
         return user_email
 
+    def _assert_matching_credentials(self) -> None:
+        if self.mock_checkout or not self.enabled:
+            return
+        public_is_test = self.public_key.startswith("TEST-")
+        token_is_test = self.access_token.startswith("TEST-")
+        if public_is_test != token_is_test:
+            raise BillingCredentialMismatchError(
+                "Mercado Pago public key and access token are from different environments"
+            )
+
     async def close(self) -> None:
         await self.db.aclose()
         await self.mp.aclose()
@@ -215,6 +229,7 @@ class BillingService:
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
         if not self.mock_checkout and not self.public_key:
             raise BillingNotConfiguredError("Mercado Pago public key is not configured")
+        self._assert_matching_credentials()
 
         await self._assert_can_start_checkout(user_id=user_id)
 
@@ -275,6 +290,7 @@ class BillingService:
 
         if not self.enabled:
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
+        self._assert_matching_credentials()
 
         reservation = await self._rpc(
             "reserve_billing_checkout_attempt",
@@ -352,6 +368,11 @@ class BillingService:
                 },
             )
             await self._release_checkout_attempt(user_id)
+            if "Card token service not found" in response.text:
+                raise BillingCredentialMismatchError(
+                    "Mercado Pago rejected the card token because public key and "
+                    "access token are from different environments"
+                )
             raise BillingServiceError(f"Mercado Pago subscribe failed: {response.text}")
 
         try:

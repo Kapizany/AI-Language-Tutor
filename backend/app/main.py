@@ -19,6 +19,7 @@ from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.entitlements import EntitlementService
 from app.services.provider_factory import build_gateway
+from app.services.synthesis import SpeechSynthesisService
 from app.services.transcription import TranscriptionService
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.billing_service = BillingService(settings)
     app.state.conversation_service = ConversationService(settings)
     app.state.transcription_service = TranscriptionService(settings)
+    app.state.synthesis_service = SpeechSynthesisService(settings)
     yield
     await app.state.auth_user_verifier.close()
     await app.state.gateway.close()
@@ -47,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.billing_service.close()
     await app.state.conversation_service.close()
     await app.state.transcription_service.close()
+    await app.state.synthesis_service.close()
 
 
 def create_app() -> FastAPI:

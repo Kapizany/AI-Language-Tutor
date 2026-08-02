@@ -10,13 +10,13 @@ import {
   Mic2,
   RotateCcw,
   Sparkles,
-  Volume2,
   X,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, ProgressRing } from "@/components/ui";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
+import { SpeechPlayback } from "@/components/speech-playback";
 import { UPGRADE_HIGHLIGHTS } from "@/lib/pricing";
 import { renderScenarioIcon } from "@/components/scenario-icons";
 import {
@@ -35,12 +35,14 @@ import {
   type ScenarioCatalogItem,
   type SessionSummary,
 } from "@/lib/conversation";
-import { shortLevel, tutorLevel, type LearnerPreferences } from "@/lib/learner";
+import { shortLevel, tutorLevel, type LearnerPreferences, type TargetLanguage } from "@/lib/learner";
+import { isPremiumPlan } from "@/lib/entitlements";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 export type CompletedConversationView = {
   sessionId: string;
   scenario: ScenarioCatalogItem;
+  targetLanguage: TargetLanguage;
   summary: SessionSummary;
   elapsedSeconds: number;
   messageCount: number;
@@ -431,6 +433,7 @@ export function Conversation({
       onCompleted({
         sessionId: conversation.session_id,
         scenario,
+        targetLanguage,
         summary: completed.summary,
         elapsedSeconds: Math.round(elapsedSeconds),
         messageCount: messages.length,
@@ -593,6 +596,15 @@ export function Conversation({
                 {message.role === "tutor" && <div className="mini-avatar">Lu</div>}
                 <div>
                   <span lang={targetLanguage}>{message.content}</span>
+                  {message.role === "tutor" && (
+                    <SpeechPlayback
+                      text={message.content}
+                      language={targetLanguage}
+                      accessToken={accessToken}
+                      enabled={isPremiumPlan(planId)}
+                      onUpgrade={onUpgrade}
+                    />
+                  )}
                 </div>
               </div>
               {message.correction && (
@@ -606,6 +618,14 @@ export function Conversation({
                     <ArrowRight size={15} aria-hidden="true" focusable="false" />
                     <ins lang={targetLanguage}>{message.correction.corrected}</ins>
                   </div>
+                  <SpeechPlayback
+                    text={message.correction.corrected}
+                    language={targetLanguage}
+                    accessToken={accessToken}
+                    enabled={isPremiumPlan(planId)}
+                    label="Ouvir correção"
+                    onUpgrade={onUpgrade}
+                  />
                   <p lang="pt-BR">{message.correction.explanation_pt_br}</p>
                 </div>
               )}
@@ -856,6 +876,7 @@ export function ConversationSummary({
   goToSessions,
   onUpgrade,
   planId = "free",
+  accessToken = "",
 }: {
   completed: CompletedConversationView | null;
   goToScenarios: () => void;
@@ -863,6 +884,7 @@ export function ConversationSummary({
   goToSessions: () => void;
   onUpgrade?: () => void;
   planId?: string;
+  accessToken?: string;
 }) {
   if (!completed) {
     return (
@@ -876,7 +898,7 @@ export function ConversationSummary({
     );
   }
 
-  const { summary, scenario } = completed;
+  const { summary, scenario, targetLanguage } = completed;
   return (
     <div className="screen-content summary-screen">
       <div className="summary-hero">
@@ -964,6 +986,16 @@ export function ConversationSummary({
                   <span key={item.term}>
                     {item.term}
                     <small>{item.translation_pt_br}</small>
+                    {accessToken && (
+                      <SpeechPlayback
+                        text={item.term}
+                        language={targetLanguage}
+                        accessToken={accessToken}
+                        enabled={isPremiumPlan(planId)}
+                        label="Ouvir"
+                        onUpgrade={onUpgrade}
+                      />
+                    )}
                   </span>
                 ))}
               </div>

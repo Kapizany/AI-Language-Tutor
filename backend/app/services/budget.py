@@ -18,6 +18,10 @@ class VoiceConsentRequiredError(RuntimeError):
     pass
 
 
+class PremiumRequiredError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class BudgetReservation:
     allowed: bool
@@ -76,6 +80,36 @@ class BudgetService:
             if reason == "account_suspended":
                 raise AccountSuspendedError(reason)
             raise BudgetExceededError(reason)
+
+    async def authorize_synthesis(
+        self,
+        *,
+        user_id: UUID,
+        character_count: int,
+        meter_usage: bool = True,
+    ) -> None:
+        if not self.enabled:
+            return
+        response = await self.client.post(
+            "/rpc/check_speech_synthesis_access",
+            json={
+                "p_user_id": str(user_id),
+                "p_character_count": character_count,
+                "p_meter_usage": meter_usage,
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        if result.get("allowed", False):
+            return
+        reason = result.get("reason")
+        if reason == "premium_required":
+            raise PremiumRequiredError("Premium plan required for text-to-speech")
+        if reason == "account_suspended":
+            raise AccountSuspendedError(reason)
+        if reason == "invalid_text_length":
+            raise BudgetExceededError("Text length is outside the allowed range")
+        raise BudgetExceededError("Too many speech synthesis attempts. Try again shortly.")
 
     async def authorize_transcription(self, *, user_id: UUID) -> None:
         if not self.enabled:

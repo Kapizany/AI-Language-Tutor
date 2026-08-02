@@ -27,6 +27,7 @@ export const PLAN_COMPARISON = {
     conversationSessions: 20,
     llmRequests: 500,
     transcriptions: 100,
+    speechSyntheses: 200,
     messagesPerSession: 60,
   },
 } as const;
@@ -46,7 +47,7 @@ export const PREMIUM_VALUE_PROPS = [
   },
   {
     title: "Fale mais, ouça mais",
-    description: "Muito mais transcrições de voz e respostas do tutor por dia.",
+    description: "Muito mais transcrições de voz, pronúncia natural e respostas do tutor por dia.",
     stat: "10× mais voz",
   },
   {
@@ -85,6 +86,21 @@ export const PLAN_FEATURE_GROUPS = [
         free: PLAN_COMPARISON.free.transcriptions,
         premium: PLAN_COMPARISON.premium.transcriptions,
         highlight: true,
+      },
+      {
+        label: "Pronúncia com voz natural (TTS)",
+        hint: "Ouça mensagens do tutor, correções e vocabulário no idioma estudado.",
+        free: false,
+        premium: true,
+        boolean: true,
+        highlight: true,
+      },
+      {
+        label: "Reproduções de voz por dia",
+        hint: "Cada clique em Ouvir conta como uma reprodução.",
+        free: 0,
+        premium: PLAN_COMPARISON.premium.speechSyntheses,
+        highlight: false,
       },
       {
         label: "Chamadas de IA por dia",
@@ -152,6 +168,7 @@ export const CHECKOUT_TRUST_ITEMS = [
 export const UPGRADE_HIGHLIGHTS = [
   `${PLAN_COMPARISON.premium.conversationSessions} conversas por dia`,
   `${PLAN_COMPARISON.premium.messagesPerSession} mensagens por conversa`,
+  "Ouça pronúncia natural nas mensagens do tutor",
   `${PLAN_COMPARISON.premium.transcriptions} transcrições de voz por dia`,
 ] as const;
 

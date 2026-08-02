@@ -19,6 +19,7 @@ export type EntitlementsSummary = {
     llm_requests: UsageCounter;
     llm_cost_usd: UsageCounter;
     transcriptions: UsageCounter;
+    speech_syntheses: UsageCounter;
   };
 };
 

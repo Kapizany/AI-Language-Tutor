@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     llm_speech_transcription_max_cost_usd: float = 0.01
     speech_max_audio_bytes: int = 500_000
 
+    speech_synthesis_enabled: bool = True
+    speech_synthesis_provider: str = "google_standard"
+    speech_synthesis_max_text_length: int = 500
+    speech_synthesis_max_cost_usd: float = 0.005
+    speech_synthesis_cache_version: str = "2026-08-02-v1"
+    speech_synthesis_memory_cache_size: int = 64
+    speech_synthesis_usd_per_million_characters: float = 4.0
+    google_access_token: str = ""
+
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"
     # Cache-miss price is intentionally used for conservative cost accounting.

@@ -2588,7 +2588,7 @@ export default function ProductPrototype() {
         return selectedScenario
           ? <Conversation key={selectedScenario.id} scenario={selectedScenario} preferences={preferences} session={session} planId={planId} goBack={() => go("scenarios")} onUpgrade={() => go("pricing")} onCompleted={conversationCompleted}/>
           : <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
-      case "summary": return <ConversationSummary completed={completedConversation} planId={planId} onUpgrade={() => go("pricing")} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
+      case "summary": return <ConversationSummary completed={completedConversation} planId={planId} accessToken={session?.access_token || ""} onUpgrade={() => go("pricing")} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
       case "sessions": return <SessionHistory displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} go={go} resumeScenario={selectScenario}/>;
       case "vocabulary": return <LearningCenter key={`review-${preferences?.targetLanguage || "en"}`} displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;

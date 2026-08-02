@@ -10,6 +10,8 @@ export class ApiClientError extends Error {
 
 const apiBaseUrl = () => process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
 
+export { apiBaseUrl };
+
 export async function apiRequest<T>(
   path: string,
   {

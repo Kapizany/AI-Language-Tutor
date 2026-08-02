@@ -11,6 +11,7 @@ from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.entitlements import EntitlementService
 from app.services.gateway import LLMGateway
+from app.services.synthesis import SpeechSynthesisService
 from app.services.transcription import TranscriptionService
 
 
@@ -32,6 +33,10 @@ async def get_conversation_service(request: Request) -> ConversationService:
 
 async def get_transcription_service(request: Request) -> TranscriptionService:
     return cast(TranscriptionService, request.app.state.transcription_service)
+
+
+async def get_synthesis_service(request: Request) -> SpeechSynthesisService:
+    return cast(SpeechSynthesisService, request.app.state.synthesis_service)
 
 
 async def get_entitlement_service(request: Request) -> EntitlementService:
@@ -70,6 +75,7 @@ BudgetDependency = Annotated[BudgetService, Depends(get_budget_service)]
 AccountDependency = Annotated[AccountService, Depends(get_account_service)]
 ConversationDependency = Annotated[ConversationService, Depends(get_conversation_service)]
 TranscriptionDependency = Annotated[TranscriptionService, Depends(get_transcription_service)]
+SynthesisDependency = Annotated[SpeechSynthesisService, Depends(get_synthesis_service)]
 EntitlementDependency = Annotated[EntitlementService, Depends(get_entitlement_service)]
 AdminDependency = Annotated[AdminService, Depends(get_admin_service)]
 BillingDependency = Annotated[BillingService, Depends(get_billing_service)]

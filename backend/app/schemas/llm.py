@@ -80,6 +80,20 @@ class SpeechTranscriptionResponse(BaseModel):
     usage: UsageSummary
 
 
+class SpeechSynthesisRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    language: TargetLanguage
+    speaking_rate: float = Field(default=1.0, ge=0.75, le=1.0)
+    request_id: UUID
+
+
+class SpeechSynthesisResponse(BaseModel):
+    request_id: UUID
+    content_type: str
+    cached: bool
+    usage: UsageSummary
+
+
 class StartConversationRequest(BaseModel):
     scenario_id: str = Field(min_length=1, max_length=100)
     target_language: TargetLanguage

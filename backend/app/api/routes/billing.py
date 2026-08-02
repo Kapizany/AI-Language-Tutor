@@ -10,6 +10,7 @@ from app.schemas.billing import (
     BillingRefreshResponse,
     BillingSubscriptionView,
     CancelSubscriptionResponse,
+    CheckoutStatusResponse,
     CheckoutSubscribeRequest,
     CheckoutSubscribeResponse,
 )
@@ -136,6 +137,40 @@ async def subscribe_checkout(
             failure_detail="Não foi possível iniciar a assinatura agora.",
         )
     return CheckoutSubscribeResponse.model_validate(result)
+
+
+@router.get("/checkout/status", response_model=CheckoutStatusResponse)
+async def checkout_status(
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CheckoutStatusResponse:
+    try:
+        result = await billing.get_checkout_status(user_id=user.id)
+    except BillingNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pagamentos ainda não estão disponíveis.",
+        ) from exc
+    except BillingProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível consultar o pagamento agora.",
+        ) from exc
+    except BillingServiceError as exc:
+        logger.exception(
+            "Billing operation failed",
+            extra={
+                "operation": "checkout_status",
+                "provider": "asaas",
+                "billing_cycle": "current",
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível consultar o pagamento agora.",
+        ) from exc
+    return CheckoutStatusResponse.model_validate(result)
 
 
 @router.post("/subscription/cancel", response_model=CancelSubscriptionResponse)

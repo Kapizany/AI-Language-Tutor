@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import type { Session } from "@supabase/supabase-js";
 import {
   Check,
-  Copy,
   Crown,
   CreditCard,
   Lock,
@@ -18,12 +16,15 @@ import {
 } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
+import { PendingCheckoutPanel } from "@/components/pending-checkout-panel";
 import { PlanComparison } from "@/components/plan-comparison";
 import { Button } from "@/components/ui";
 import {
+  loadCheckoutStatus,
   refreshBillingSubscription,
   subscribeCheckout,
   type BillingCycle,
+  type CheckoutStatus,
   type CheckoutSubscribeResponse,
   type PaymentMethod,
 } from "@/lib/billing";
@@ -62,6 +63,30 @@ const PREMIUM_HIGHLIGHTS = [
 
 type CheckoutStep = "form" | "pending";
 
+function checkoutStatusToResult(status: CheckoutStatus): CheckoutSubscribeResponse | null {
+  if (
+    !status.has_pending_checkout
+    || !status.payment_method
+    || !status.billing_cycle
+    || !status.external_subscription_id
+    || status.amount == null
+  ) {
+    return null;
+  }
+  return {
+    status: status.payment_status === "confirmed" ? "confirmed" : "pending",
+    payment_method: status.payment_method,
+    external_subscription_id: status.external_subscription_id,
+    amount: status.amount,
+    currency: status.currency || "BRL",
+    billing_cycle: status.billing_cycle,
+    message: status.message || "",
+    pix_qr_code: status.pix_qr_code,
+    pix_copy_paste: status.pix_copy_paste,
+    mock_checkout: false,
+  };
+}
+
 export function PricingScreen({
   session,
   displayName,
@@ -75,6 +100,8 @@ export function PricingScreen({
   const [error, setError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [checkoutResult, setCheckoutResult] = useState<CheckoutSubscribeResponse | null>(null);
+  const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [cpf, setCpf] = useState("");
   const [cardHolderName, setCardHolderName] = useState("");
   const [cardNumber, setCardNumber] = useState("");
@@ -84,9 +111,9 @@ export function PricingScreen({
   const [holderPostalCode, setHolderPostalCode] = useState("");
   const [holderAddressNumber, setHolderAddressNumber] = useState("");
   const [holderPhone, setHolderPhone] = useState("");
-  const [copiedPix, setCopiedPix] = useState(false);
   const checkoutInFlight = useRef(false);
   const pollRef = useRef<number | null>(null);
+  const accessToken = session?.access_token;
 
   const selectedPricing = PREMIUM_PRICING[cycle];
 
@@ -98,26 +125,45 @@ export function PricingScreen({
     };
   }, []);
 
-  const finishSubscription = async () => {
-    if (session?.access_token && onSubscribed) {
+  async function finishSubscription() {
+    if (accessToken && onSubscribed) {
       await onSubscribed();
     }
     go("billing-success");
-  };
+  }
 
-  const startPolling = () => {
-    if (!session?.access_token || pollRef.current) {
+  function startPolling() {
+    if (!accessToken || pollRef.current) {
       return;
     }
+    const token = accessToken;
     pollRef.current = window.setInterval(() => {
       void (async () => {
         try {
-          const result = await refreshBillingSubscription(session.access_token!);
-          if (result.plan_id === "premium" || result.subscription_status === "active") {
+          const status = await loadCheckoutStatus(token);
+          setCheckoutStatus(status);
+          if (!status.has_pending_checkout) {
             if (pollRef.current) {
               window.clearInterval(pollRef.current);
               pollRef.current = null;
             }
+            if (status.payment_status === "confirmed") {
+              await refreshBillingSubscription(token);
+              await finishSubscription();
+            }
+            return;
+          }
+          const restored = checkoutStatusToResult(status);
+          if (restored) {
+            setCheckoutResult(restored);
+            setStatusMessage(restored.message);
+          }
+          if (status.payment_status === "confirmed") {
+            if (pollRef.current) {
+              window.clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+            await refreshBillingSubscription(token);
             await finishSubscription();
           }
         } catch {
@@ -125,10 +171,78 @@ export function PricingScreen({
         }
       })();
     }, 4000);
-  };
+  }
 
-  const submitCheckout = async () => {
-    if (!session?.access_token) {
+  async function applyCheckoutStatus(status: CheckoutStatus) {
+    setCheckoutStatus(status);
+    if (!status.has_pending_checkout) {
+      if (status.payment_status === "confirmed") {
+        await finishSubscription();
+      }
+      return;
+    }
+    const restored = checkoutStatusToResult(status);
+    if (restored) {
+      setCheckoutResult(restored);
+      setStep("pending");
+      setStatusMessage(restored.message);
+      if (status.payment_method) {
+        setPaymentMethod(status.payment_method);
+      }
+      if (status.billing_cycle) {
+        setCycle(status.billing_cycle);
+      }
+    }
+    if (status.payment_status === "confirmed") {
+      if (accessToken) {
+        await refreshBillingSubscription(accessToken);
+      }
+      await finishSubscription();
+      return;
+    }
+    startPolling();
+  }
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+    let active = true;
+    const restorePendingCheckout = async () => {
+      setStatusLoading(true);
+      try {
+        const status = await loadCheckoutStatus(accessToken);
+        if (!active) return;
+        await applyCheckoutStatus(status);
+      } catch {
+        // Ignore restore errors; user can start a new checkout.
+      } finally {
+        if (active) {
+          setStatusLoading(false);
+        }
+      }
+    };
+    void restorePendingCheckout();
+    return () => {
+      active = false;
+    };
+    // Restores pending checkout when the session token changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- applyCheckoutStatus is scoped to this screen.
+  }, [accessToken]);
+
+  async function refreshCheckoutStatus() {
+    if (!accessToken) return;
+    setStatusLoading(true);
+    try {
+      const status = await loadCheckoutStatus(accessToken);
+      await applyCheckoutStatus(status);
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
+  async function submitCheckout() {
+    if (!accessToken) {
       go("login");
       return;
     }
@@ -152,7 +266,7 @@ export function PricingScreen({
     setError("");
     setStatusMessage("");
     try {
-      const result = await subscribeCheckout(session.access_token, {
+      const result = await subscribeCheckout(accessToken, {
         billing_cycle: cycle,
         payment_method: paymentMethod,
         cpf: cpfDigits,
@@ -166,11 +280,23 @@ export function PricingScreen({
         holder_phone: paymentMethod === "card" ? holderPhone.replace(/\D/g, "") : undefined,
       });
       setCheckoutResult(result);
+      setCheckoutStatus({
+        has_pending_checkout: true,
+        payment_status: "pending",
+        payment_method: result.payment_method,
+        billing_cycle: result.billing_cycle,
+        amount: result.amount,
+        currency: result.currency,
+        external_subscription_id: result.external_subscription_id,
+        pix_qr_code: result.pix_qr_code,
+        pix_copy_paste: result.pix_copy_paste,
+        message: result.message,
+      });
       setStep("pending");
       setStatusMessage(result.message);
 
       if (result.mock_checkout) {
-        const refresh = await refreshBillingSubscription(session.access_token);
+        const refresh = await refreshBillingSubscription(accessToken);
         if (refresh.plan_id === "premium" || refresh.subscription_status === "active") {
           await finishSubscription();
           return;
@@ -187,17 +313,6 @@ export function PricingScreen({
       );
     } finally {
       setLoading(false);
-    }
-  };
-
-  const copyPixCode = async () => {
-    if (!checkoutResult?.pix_copy_paste) return;
-    try {
-      await navigator.clipboard.writeText(checkoutResult.pix_copy_paste);
-      setCopiedPix(true);
-      window.setTimeout(() => setCopiedPix(false), 2000);
-    } catch {
-      setError("Não foi possível copiar o código PIX.");
     }
   };
 
@@ -437,35 +552,26 @@ export function PricingScreen({
                 </Button>
               </>
             ) : (
-              <div className="pricing-pending-panel">
-                <p className="pricing-brick-status">{statusMessage}</p>
-                {checkoutResult?.payment_method === "pix_automatic" && checkoutResult.pix_qr_code && (
-                  <div className="pricing-pix-panel">
-                    <Image
-                      src={`data:image/png;base64,${checkoutResult.pix_qr_code}`}
-                      alt="QR Code PIX para pagamento"
-                      className="pricing-pix-qr"
-                      width={220}
-                      height={220}
-                      unoptimized
-                    />
-                    {checkoutResult.pix_copy_paste && (
-                      <Button variant="secondary" full onClick={() => void copyPixCode()}>
-                        <Copy size={15} aria-hidden="true" />
-                        {copiedPix ? "Código copiado" : "Copiar código PIX"}
-                      </Button>
-                    )}
-                  </div>
-                )}
-                {checkoutResult?.payment_method === "card" && (
-                  <p className="pricing-pending-note">
-                    Aguardando confirmação do pagamento no cartão. Isso pode levar alguns instantes.
-                  </p>
-                )}
-                <Button variant="secondary" full onClick={() => go("profile")}>
-                  Ver status no perfil
-                </Button>
-              </div>
+              <PendingCheckoutPanel
+                status={
+                  checkoutStatus || {
+                    has_pending_checkout: true,
+                    payment_status: "pending",
+                    payment_method: checkoutResult?.payment_method,
+                    billing_cycle: checkoutResult?.billing_cycle,
+                    amount: checkoutResult?.amount,
+                    currency: checkoutResult?.currency,
+                    external_subscription_id: checkoutResult?.external_subscription_id,
+                    pix_qr_code: checkoutResult?.pix_qr_code,
+                    pix_copy_paste: checkoutResult?.pix_copy_paste,
+                    message: statusMessage || checkoutResult?.message || "",
+                  }
+                }
+                loading={statusLoading}
+                onRefresh={refreshCheckoutStatus}
+                onGoToProfile={() => go("profile")}
+                showProfileLink
+              />
             )}
 
             <ul className="pricing-trust-row">

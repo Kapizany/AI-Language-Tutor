@@ -392,17 +392,11 @@ class BillingService:
             )
             encoded_image = pix_payment.get("encodedImage")
             payload = pix_payment.get("payload")
-            if not isinstance(encoded_image, str) or not isinstance(payload, str):
-                pix_qr = await self._asaas_request(
-                    "GET",
-                    f"/payments/{payment_id}/pixQrCode",
-                )
-                if not isinstance(encoded_image, str):
-                    qr_image = pix_qr.get("encodedImage")
-                    encoded_image = qr_image if isinstance(qr_image, str) else None
-                if not isinstance(payload, str):
-                    qr_payload = pix_qr.get("payload")
-                    payload = qr_payload if isinstance(qr_payload, str) else None
+            encoded_image, payload = await self._fetch_pix_qr_fields(
+                payment_id=payment_id,
+                encoded_image=encoded_image,
+                payload=payload,
+            )
             return {
                 "status": "pending",
                 "payment_method": payment_method,
@@ -421,6 +415,205 @@ class BillingService:
         except BillingServiceError:
             await self._release_checkout_attempt(user_id)
             raise
+
+    async def _fetch_pix_qr_fields(
+        self,
+        *,
+        payment_id: str,
+        encoded_image: Any = None,
+        payload: Any = None,
+    ) -> tuple[str | None, str | None]:
+        image = encoded_image if isinstance(encoded_image, str) else None
+        copy_paste = payload if isinstance(payload, str) else None
+        if image and copy_paste:
+            return image, copy_paste
+        pix_qr = await self._asaas_request("GET", f"/payments/{payment_id}/pixQrCode")
+        if not image:
+            qr_image = pix_qr.get("encodedImage")
+            image = qr_image if isinstance(qr_image, str) else None
+        if not copy_paste:
+            qr_payload = pix_qr.get("payload")
+            copy_paste = qr_payload if isinstance(qr_payload, str) else None
+        return image, copy_paste
+
+    async def _load_latest_pending_checkout(self, *, user_id: UUID) -> dict[str, Any] | None:
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "status": "eq.pending",
+                    "select": (
+                        "id,billing_cycle,external_subscription_id,payment_method,status,created_at"
+                    ),
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not load pending checkout") from exc
+        if response.status_code >= 400:
+            raise BillingServiceError("Could not load pending checkout")
+        rows = response.json()
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return None
+        return rows[0]
+
+    @staticmethod
+    def _checkout_status_message(
+        *,
+        payment_method: str,
+        payment_status: str,
+    ) -> str:
+        if payment_status == "confirmed":
+            return "Pagamento confirmado."
+        if payment_status == "overdue":
+            return "Pagamento vencido. Gere um novo PIX para continuar."
+        if payment_status == "canceled":
+            return "Pagamento cancelado."
+        if payment_method == "pix_automatic":
+            return (
+                "Aguardando pagamento via PIX. Escaneie o QR code ou copie o código "
+                "para concluir sua assinatura."
+            )
+        return "Aguardando confirmação do pagamento no cartão."
+
+    async def get_checkout_status(self, *, user_id: UUID) -> dict[str, Any]:
+        if not self.enabled and not self.mock_checkout:
+            raise BillingNotConfiguredError("Asaas billing is not configured")
+
+        subscription = await self._load_user_subscription(user_id=user_id)
+        if subscription:
+            plan_id = str(subscription.get("plan_id") or "free")
+            sub_status = str(subscription.get("status") or "active")
+            if plan_id == "premium" and sub_status == "active":
+                return {"has_pending_checkout": False}
+
+        checkout = await self._load_latest_pending_checkout(user_id=user_id)
+        external_id = str(checkout.get("external_subscription_id") or "") if checkout else ""
+        payment_method = str(
+            (checkout or {}).get("payment_method")
+            or (subscription or {}).get("payment_method")
+            or "card"
+        )
+        billing_cycle = (checkout or {}).get("billing_cycle") or (subscription or {}).get(
+            "billing_cycle"
+        )
+        checkout_created_at = (checkout or {}).get("created_at")
+
+        if not external_id and subscription and subscription.get("subscription_source") == PROVIDER:
+            external_id = str(subscription.get("external_subscription_id") or "")
+
+        if not external_id:
+            return {"has_pending_checkout": False}
+
+        if billing_cycle not in PRICING:
+            billing_cycle = "monthly"
+        pricing = PRICING[billing_cycle]  # type: ignore[index]
+        amount = float(pricing["amount"])
+
+        if self.mock_checkout and external_id.startswith("mock:"):
+            return {
+                "has_pending_checkout": True,
+                "checkout_status": "pending",
+                "payment_status": "pending",
+                "payment_method": payment_method,
+                "billing_cycle": billing_cycle,
+                "amount": amount,
+                "currency": "BRL",
+                "external_subscription_id": external_id,
+                "checkout_created_at": checkout_created_at,
+                "message": self._checkout_status_message(
+                    payment_method=payment_method,
+                    payment_status="pending",
+                ),
+            }
+
+        if payment_method == "pix_automatic":
+            payment = await self._asaas_request("GET", f"/payments/{external_id}")
+        else:
+            payment_list = await self._asaas_request(
+                "GET",
+                f"/subscriptions/{external_id}/payments?limit=1",
+            )
+            data = payment_list.get("data")
+            payment = data[0] if isinstance(data, list) and data else {}
+
+        provider_status = str(payment.get("status") or "").upper()
+        mapped = self._map_payment_status(provider_status)
+
+        if mapped in {"confirmed", "received", "active"}:
+            sync_result = await self._process_provider_status(
+                user_id=user_id,
+                external_subscription_id=external_id,
+                external_customer_id=str(payment.get("customer") or ""),
+                provider_status=mapped,
+                billing_cycle=billing_cycle,
+                payment_method=payment_method,
+                payload=payment if isinstance(payment, dict) else {},
+                event_key=f"status:{external_id}:{provider_status}",
+            )
+            if str(sync_result.get("subscription_status") or "") == "active":
+                return {
+                    "has_pending_checkout": False,
+                    "payment_status": "confirmed",
+                    "message": "Pagamento confirmado. Premium ativo.",
+                }
+            return {
+                "has_pending_checkout": True,
+                "checkout_status": "pending",
+                "payment_status": "confirmed",
+                "payment_method": payment_method,
+                "billing_cycle": billing_cycle,
+                "amount": amount,
+                "currency": "BRL",
+                "external_subscription_id": external_id,
+                "checkout_created_at": checkout_created_at,
+                "message": "Pagamento confirmado. Ativando Premium...",
+            }
+
+        if mapped in {"canceled", "overdue"} or provider_status in {"REFUNDED", "DELETED"}:
+            return {
+                "has_pending_checkout": False,
+                "payment_status": mapped,
+                "payment_method": payment_method,
+                "billing_cycle": billing_cycle,
+                "amount": amount,
+                "currency": "BRL",
+                "external_subscription_id": external_id,
+                "checkout_created_at": checkout_created_at,
+                "message": self._checkout_status_message(
+                    payment_method=payment_method,
+                    payment_status=mapped,
+                ),
+            }
+
+        pix_qr_code: str | None = None
+        pix_copy_paste: str | None = None
+        if payment_method == "pix_automatic":
+            pix_qr_code, pix_copy_paste = await self._fetch_pix_qr_fields(
+                payment_id=external_id,
+                encoded_image=payment.get("encodedImage") if isinstance(payment, dict) else None,
+                payload=payment.get("payload") if isinstance(payment, dict) else None,
+            )
+
+        return {
+            "has_pending_checkout": True,
+            "checkout_status": "pending",
+            "payment_status": "pending",
+            "payment_method": payment_method,
+            "billing_cycle": billing_cycle,
+            "amount": amount,
+            "currency": "BRL",
+            "external_subscription_id": external_id,
+            "pix_qr_code": pix_qr_code,
+            "pix_copy_paste": pix_copy_paste,
+            "checkout_created_at": checkout_created_at,
+            "message": self._checkout_status_message(
+                payment_method=payment_method,
+                payment_status="pending",
+            ),
+        }
 
     async def _load_user_subscription(self, *, user_id: UUID) -> dict[str, Any] | None:
         try:

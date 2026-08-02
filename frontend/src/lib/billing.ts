@@ -30,6 +30,21 @@ export type CheckoutSubscribeResponse = {
   mock_checkout: boolean;
 };
 
+export type CheckoutStatus = {
+  has_pending_checkout: boolean;
+  checkout_status?: "pending" | "authorized" | "cancelled" | "failed" | null;
+  payment_status?: "pending" | "confirmed" | "overdue" | "canceled" | "processing" | null;
+  payment_method?: PaymentMethod | null;
+  billing_cycle?: BillingCycle | null;
+  amount?: number | null;
+  currency?: string;
+  external_subscription_id?: string | null;
+  pix_qr_code?: string | null;
+  pix_copy_paste?: string | null;
+  checkout_created_at?: string | null;
+  message?: string | null;
+};
+
 export type BillingSubscription = {
   plan_id: string;
   subscription_status: string;
@@ -52,6 +67,10 @@ export async function subscribeCheckout(
     method: "POST",
     body: payload,
   });
+}
+
+export async function loadCheckoutStatus(accessToken: string) {
+  return apiRequest<CheckoutStatus>("/api/v1/billing/checkout/status", { accessToken });
 }
 
 export async function refreshBillingSubscription(accessToken: string) {

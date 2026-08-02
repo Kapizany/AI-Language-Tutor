@@ -58,3 +58,20 @@ class BillingRefreshResponse(BaseModel):
     plan_id: str | None = None
     subscription_status: str | None = None
     reason: str | None = None
+
+
+class CheckoutStatusResponse(BaseModel):
+    has_pending_checkout: bool
+    checkout_status: Literal["pending", "authorized", "cancelled", "failed"] | None = None
+    payment_status: Literal["pending", "confirmed", "overdue", "canceled", "processing"] | None = (
+        None
+    )
+    payment_method: PaymentMethod | None = None
+    billing_cycle: BillingCycle | None = None
+    amount: float | None = None
+    currency: str = "BRL"
+    external_subscription_id: str | None = None
+    pix_qr_code: str | None = None
+    pix_copy_paste: str | None = None
+    checkout_created_at: datetime | None = None
+    message: str | None = None

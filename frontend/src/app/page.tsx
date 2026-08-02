@@ -68,7 +68,8 @@ import { PlanComparison } from "@/components/plan-comparison";
 import { PricingScreen } from "@/components/pricing-screen";
 import { BillingResultScreen } from "@/components/billing-result-screen";
 import { loadIsAdmin } from "@/lib/admin";
-import { cancelBillingSubscription } from "@/lib/billing";
+import { cancelBillingSubscription, loadCheckoutStatus, type CheckoutStatus } from "@/lib/billing";
+import { PendingCheckoutPanel } from "@/components/pending-checkout-panel";
 import {
   goalLabels,
   languageDetails,
@@ -1046,6 +1047,8 @@ function Profile({
   const [entitlementsLoading, setEntitlementsLoading] = useState(false);
   const [entitlementsError, setEntitlementsError] = useState("");
   const [cancelingSubscription, setCancelingSubscription] = useState(false);
+  const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
+  const [checkoutStatusLoading, setCheckoutStatusLoading] = useState(false);
 
   const resolvedLanguageLevels = studiedLanguages.map((entry) => ({
     ...entry,
@@ -1075,6 +1078,40 @@ function Profile({
     void load();
     return () => { active = false; };
   }, [section, session?.access_token]);
+
+  useEffect(() => {
+    if (!session?.access_token || section !== "plan") return;
+    let active = true;
+    const load = async () => {
+      setCheckoutStatusLoading(true);
+      try {
+        const status = await loadCheckoutStatus(session.access_token);
+        if (active) setCheckoutStatus(status);
+      } catch {
+        if (active) setCheckoutStatus(null);
+      } finally {
+        if (active) setCheckoutStatusLoading(false);
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [section, session?.access_token]);
+
+  const refreshCheckoutStatus = async () => {
+    if (!session?.access_token) return;
+    setCheckoutStatusLoading(true);
+    try {
+      const status = await loadCheckoutStatus(session.access_token);
+      setCheckoutStatus(status);
+      if (!status.has_pending_checkout && status.payment_status === "confirmed") {
+        setEntitlements(await loadEntitlements(session.access_token));
+      }
+    } catch {
+      setEntitlementsError("Não foi possível atualizar o status do pagamento.");
+    } finally {
+      setCheckoutStatusLoading(false);
+    }
+  };
 
   const cancelSubscription = async () => {
     if (!session?.access_token || cancelingSubscription) return;
@@ -1206,6 +1243,14 @@ function Profile({
             )}
             {!entitlementsLoading && entitlements && (
               <p className="usage-note">Chamadas de IA incluem respostas do tutor, correções e exercícios. Os limites são redefinidos todo dia.</p>
+            )}
+            {!entitlementsLoading && entitlements?.plan_id === "free" && checkoutStatus?.has_pending_checkout && (
+              <PendingCheckoutPanel
+                status={checkoutStatus}
+                loading={checkoutStatusLoading}
+                onRefresh={refreshCheckoutStatus}
+                onContinueCheckout={goToPricing}
+              />
             )}
             {!entitlementsLoading && entitlements?.plan_id === "free" && (
               <UpgradePrompt

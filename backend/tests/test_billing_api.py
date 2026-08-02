@@ -31,6 +31,59 @@ async def test_billing_plans_are_public() -> None:
 
 
 @pytest.mark.asyncio
+async def test_checkout_status_requires_authentication() -> None:
+    billing = AsyncMock(spec=BillingService)
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/v1/billing/checkout/status")
+    app.dependency_overrides.clear()
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_returns_pending_pix() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.get_checkout_status.return_value = {
+        "has_pending_checkout": True,
+        "payment_status": "pending",
+        "payment_method": "pix_automatic",
+        "billing_cycle": "monthly",
+        "amount": 2.00,
+        "currency": "BRL",
+        "external_subscription_id": "pay_777",
+        "pix_qr_code": "base64qr",
+        "pix_copy_paste": "000201010212",
+        "message": "Aguardando pagamento via PIX.",
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.get("/api/v1/billing/checkout/status")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_pending_checkout"] is True
+    assert payload["pix_qr_code"] == "base64qr"
+    billing.get_checkout_status.assert_awaited_once_with(user_id=LEARNER_ID)
+
+
+@pytest.mark.asyncio
 async def test_checkout_subscribe_requires_authentication() -> None:
     billing = AsyncMock(spec=BillingService)
 

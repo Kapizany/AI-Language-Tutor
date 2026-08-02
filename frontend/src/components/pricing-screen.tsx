@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Check,
@@ -53,6 +53,7 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
   const [cycle, setCycle] = useState<BillingCycle>("annual");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const checkoutInFlight = useRef(false);
 
   const monthlyEquivalent = annualMonthlyEquivalent();
   const selectedPricing = PREMIUM_PRICING[cycle];
@@ -62,12 +63,17 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
       go("login");
       return;
     }
+    if (checkoutInFlight.current || loading) {
+      return;
+    }
+    checkoutInFlight.current = true;
     setLoading(true);
     setError("");
     try {
       const checkout = await startCheckout(session.access_token, cycle);
       window.location.href = checkout.checkout_url;
     } catch (caught) {
+      checkoutInFlight.current = false;
       setError(
         caught instanceof ApiClientError
           ? caught.message

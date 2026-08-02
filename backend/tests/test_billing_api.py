@@ -153,3 +153,47 @@ async def test_webhook_processes_valid_signature() -> None:
         topic="subscription_preapproval",
         payload=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_mercadopago_simulation_payload() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.verify_webhook_signature.return_value = True
+    billing.handle_notification.return_value = {
+        "processed": True,
+        "simulation": True,
+        "reason": "simulation_acknowledged",
+    }
+    simulation_payload = {
+        "action": "updated",
+        "data": {"id": "123456"},
+        "id": "123456",
+        "type": "subscription_preapproval",
+        "live_mode": False,
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/webhook",
+            json=simulation_payload,
+            headers={
+                "x-request-id": "request-1",
+                "x-signature": "ts=123,v1=valid",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["simulation"] is True
+    billing.handle_notification.assert_awaited_once_with(
+        resource_id="123456",
+        topic="subscription_preapproval",
+        payload=simulation_payload,
+    )

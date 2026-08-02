@@ -16,6 +16,7 @@ from app.services.billing import (
     BillingNotConfiguredError,
     BillingRateLimitError,
     BillingServiceError,
+    parse_mercadopago_webhook_payload,
 )
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -44,9 +45,21 @@ async def create_checkout(
             detail="Você já possui uma assinatura Premium ativa.",
         ) from exc
     except BillingRateLimitError as exc:
+        detail = "Muitas tentativas de checkout. Aguarde alguns minutos."
+        if exc.retry_after_seconds:
+            if exc.retry_after_seconds >= 60:
+                minutes = max(1, round(exc.retry_after_seconds / 60))
+                detail = (
+                    f"Muitas tentativas de checkout. Tente novamente em cerca de {minutes} min."
+                )
+            else:
+                detail = (
+                    f"Muitas tentativas de checkout. Tente novamente em "
+                    f"{exc.retry_after_seconds} segundos."
+                )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Muitas tentativas de checkout. Aguarde alguns minutos.",
+            detail=detail,
         ) from exc
     except BillingServiceError as exc:
         raise HTTPException(
@@ -117,20 +130,19 @@ async def mercadopago_webhook(
     x_signature: str | None = Header(default=None),
     x_request_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    resource_id = id or data_id
-    payload: dict[str, Any] | None = None
+    body: dict[str, Any] = {}
+    try:
+        parsed = await request.json()
+        if isinstance(parsed, dict):
+            body = parsed
+    except Exception:
+        body = {}
 
-    if not resource_id:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        if isinstance(body, dict):
-            payload = body
-            data = body.get("data")
-            if isinstance(data, dict) and data.get("id"):
-                resource_id = str(data["id"])
-            topic = topic or str(body.get("type") or body.get("topic") or "")
+    resource_id, resolved_topic, payload = parse_mercadopago_webhook_payload(
+        body,
+        query_resource_id=id or data_id,
+        query_topic=topic,
+    )
 
     if not billing.verify_webhook_signature(
         resource_id=resource_id,
@@ -142,18 +154,11 @@ async def mercadopago_webhook(
             detail="Invalid webhook signature.",
         )
 
-    try:
-        result = await billing.handle_notification(
-            resource_id=resource_id,
-            topic=topic,
-            payload=payload,
-        )
-    except BillingServiceError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Webhook processing failed.",
-        ) from None
-    return result
+    return await billing.handle_notification(
+        resource_id=resource_id,
+        topic=resolved_topic,
+        payload=payload,
+    )
 
 
 @router.get("/plans")

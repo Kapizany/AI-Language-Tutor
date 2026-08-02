@@ -38,11 +38,53 @@ class BillingNotConfiguredError(BillingServiceError):
 
 
 class BillingRateLimitError(BillingServiceError):
-    pass
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class AlreadyPremiumError(BillingServiceError):
     pass
+
+
+MP_SIMULATION_PREAPPROVAL_IDS = frozenset({"123456", "12345"})
+
+
+def parse_mercadopago_webhook_payload(
+    body: dict[str, Any] | None,
+    *,
+    query_resource_id: str | None = None,
+    query_topic: str | None = None,
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    payload = body if body else None
+    resource_id = query_resource_id
+    topic = query_topic
+
+    if payload:
+        data = payload.get("data")
+        if not resource_id and isinstance(data, dict) and data.get("id") is not None:
+            resource_id = str(data["id"])
+        if not resource_id and payload.get("id") is not None:
+            resource_id = str(payload["id"])
+        if not topic:
+            topic = (
+                str(payload.get("type") or payload.get("topic") or payload.get("entity") or "")
+                or None
+            )
+
+    return resource_id, topic, payload
+
+
+def is_mercadopago_simulation_webhook(
+    *,
+    resource_id: str | None,
+    payload: dict[str, Any] | None,
+) -> bool:
+    if resource_id and resource_id in MP_SIMULATION_PREAPPROVAL_IDS:
+        return True
+    if payload and payload.get("live_mode") is False:
+        return True
+    return False
 
 
 class BillingService:
@@ -80,6 +122,10 @@ class BillingService:
                 "Content-Type": "application/json",
             },
         )
+
+    @property
+    def webhooks_ready(self) -> bool:
+        return bool(self.db.headers.get("apikey") and self.access_token)
 
     async def close(self) -> None:
         await self.db.aclose()
@@ -126,7 +172,17 @@ class BillingService:
             reason = reservation.get("reason") if isinstance(reservation, dict) else None
             if reason == "already_premium":
                 raise AlreadyPremiumError("User already has an active premium subscription")
-            raise BillingRateLimitError("Too many checkout attempts")
+            retry_after = None
+            if isinstance(reservation, dict):
+                raw_retry = reservation.get("retry_after_seconds")
+                if isinstance(raw_retry, int):
+                    retry_after = raw_retry
+                elif isinstance(raw_retry, str) and raw_retry.isdigit():
+                    retry_after = int(raw_retry)
+            raise BillingRateLimitError(
+                "Too many checkout attempts",
+                retry_after_seconds=retry_after,
+            )
 
         pricing = PRICING[billing_cycle]
         payload: dict[str, Any] = {
@@ -146,32 +202,46 @@ class BillingService:
         if self.notification_url:
             payload["notification_url"] = self.notification_url
 
-        response = await self.mp.post(
-            "/preapproval",
-            json=payload,
-            headers={"X-Idempotency-Key": str(uuid4())},
-        )
-        if response.status_code >= 400:
-            raise BillingServiceError(f"Mercado Pago checkout failed: {response.text}")
+        try:
+            response = await self.mp.post(
+                "/preapproval",
+                json=payload,
+                headers={"X-Idempotency-Key": str(uuid4())},
+            )
+            if response.status_code >= 400:
+                raise BillingServiceError(f"Mercado Pago checkout failed: {response.text}")
 
-        body = response.json()
-        checkout_url = body.get("init_point") or body.get("sandbox_init_point")
-        external_id = body.get("id")
-        if not checkout_url or not external_id:
-            raise BillingServiceError("Mercado Pago checkout returned an incomplete payload")
+            body = response.json()
+            checkout_url = body.get("init_point") or body.get("sandbox_init_point")
+            external_id = body.get("id")
+            if not checkout_url or not external_id:
+                raise BillingServiceError("Mercado Pago checkout returned an incomplete payload")
 
-        await self._rpc(
-            "create_billing_checkout",
-            {
-                "p_user_id": str(user_id),
-                "p_billing_cycle": billing_cycle,
-                "p_external_subscription_id": str(external_id),
-            },
-        )
+            await self._rpc(
+                "create_billing_checkout",
+                {
+                    "p_user_id": str(user_id),
+                    "p_billing_cycle": billing_cycle,
+                    "p_external_subscription_id": str(external_id),
+                },
+            )
+        except BillingServiceError:
+            await self._release_checkout_attempt(user_id)
+            raise
+
         return {
             "checkout_url": str(checkout_url),
             "external_subscription_id": str(external_id),
         }
+
+    async def _release_checkout_attempt(self, user_id: UUID) -> None:
+        try:
+            await self._rpc(
+                "release_billing_checkout_attempt",
+                {"p_user_id": str(user_id)},
+            )
+        except BillingServiceError:
+            return
 
     async def fetch_preapproval(self, preapproval_id: str) -> dict[str, Any]:
         if self.mock_checkout and preapproval_id.startswith("mock:"):
@@ -184,10 +254,12 @@ class BillingService:
                 "next_payment_date": None,
             }
 
-        if not self.enabled:
+        if not self.webhooks_ready:
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
 
         response = await self.mp.get(f"/preapproval/{preapproval_id}")
+        if response.status_code == 404:
+            raise BillingServiceError(f"Preapproval {preapproval_id} was not found")
         if response.status_code >= 400:
             raise BillingServiceError(f"Mercado Pago lookup failed: {response.text}")
         body = response.json()
@@ -237,6 +309,9 @@ class BillingService:
         billing_cycle: str | None = None,
         fallback_user_id: UUID | None = None,
     ) -> dict[str, Any]:
+        if not self.webhooks_ready:
+            return {"processed": False, "reason": "billing_not_configured"}
+
         preapproval = await self.fetch_preapproval(preapproval_id)
         user_id, parsed_cycle = self._parse_external_reference(
             str(preapproval.get("external_reference") or ""),
@@ -305,14 +380,33 @@ class BillingService:
         topic: str | None,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del payload
+        if is_mercadopago_simulation_webhook(resource_id=resource_id, payload=payload):
+            return {
+                "processed": True,
+                "simulation": True,
+                "reason": "simulation_acknowledged",
+            }
+
         if not resource_id:
             return {"processed": False, "reason": "missing_resource_id"}
 
-        if topic and topic not in {"subscription_preapproval", "preapproval"}:
+        if topic and topic not in {
+            "subscription_preapproval",
+            "preapproval",
+            "subscription_authorized_payment",
+        }:
             return {"processed": False, "reason": "ignored_topic"}
 
-        return await self.sync_preapproval(preapproval_id=resource_id)
+        if not self.webhooks_ready:
+            return {"processed": False, "reason": "billing_not_configured"}
+
+        try:
+            return await self.sync_preapproval(preapproval_id=resource_id)
+        except BillingServiceError as exc:
+            message = str(exc)
+            if "was not found" in message:
+                return {"processed": False, "reason": "preapproval_not_found"}
+            return {"processed": False, "reason": "sync_failed", "detail": message}
 
     def _parse_external_reference(
         self,

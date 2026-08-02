@@ -4,7 +4,11 @@ import hmac
 import pytest
 
 from app.core.config import Settings
-from app.services.billing import BillingService
+from app.services.billing import (
+    BillingService,
+    is_mercadopago_simulation_webhook,
+    parse_mercadopago_webhook_payload,
+)
 
 
 @pytest.mark.asyncio
@@ -50,5 +54,50 @@ async def test_webhook_signature_requires_all_fields() -> None:
             request_id=None,
             signature="ts=1,v1=value",
         )
+    finally:
+        await service.close()
+
+
+def test_parse_mercadopago_webhook_payload_reads_subscription_body() -> None:
+    body = {
+        "action": "updated",
+        "data": {"id": "123456"},
+        "id": "123456",
+        "type": "subscription_preapproval",
+        "live_mode": False,
+    }
+    resource_id, topic, payload = parse_mercadopago_webhook_payload(body)
+    assert resource_id == "123456"
+    assert topic == "subscription_preapproval"
+    assert payload == body
+    assert is_mercadopago_simulation_webhook(resource_id=resource_id, payload=payload)
+
+
+@pytest.mark.asyncio
+async def test_handle_notification_acknowledges_simulation_without_mercado_pago_lookup() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_access_token="TEST-token",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+        )
+    )
+    try:
+        result = await service.handle_notification(
+            resource_id="123456",
+            topic="subscription_preapproval",
+            payload={
+                "type": "subscription_preapproval",
+                "data": {"id": "123456"},
+                "live_mode": False,
+            },
+        )
+        assert result == {
+            "processed": True,
+            "simulation": True,
+            "reason": "simulation_acknowledged",
+        }
     finally:
         await service.close()

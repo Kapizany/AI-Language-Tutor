@@ -109,6 +109,20 @@ async def test_handle_notification_acknowledges_simulation_without_mercado_pago_
 
 
 @pytest.mark.asyncio
+async def test_preapproval_back_url_strips_spa_fragment() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_back_url="https://ai-language-tutor.caps-labs.com/#/billing/success",
+        )
+    )
+    try:
+        assert service._preapproval_back_url() == "https://ai-language-tutor.caps-labs.com/"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_mismatched_public_key_and_access_token_are_rejected() -> None:
     service = BillingService(
         Settings(
@@ -229,6 +243,8 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
             assert payload["card_token_id"] == "card-token-abc123"
             assert payload["payer_email"] == "learner@example.test"
             assert payload["auto_recurring"]["transaction_amount"] == 5.0
+            assert "start_date" in payload["auto_recurring"]
+            assert "#" not in payload["back_url"]
             return httpx.Response(
                 201,
                 request=request,

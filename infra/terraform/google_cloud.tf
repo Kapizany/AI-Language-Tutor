@@ -42,7 +42,7 @@ locals {
     # Real-credential smoke tests require a real payer identity.
     MERCADOPAGO_TEST_CHECKOUT      = "false"
     MERCADOPAGO_NOTIFICATION_URL   = "${var.backend_public_url}/api/v1/billing/webhook"
-    MERCADOPAGO_BACK_URL           = "${var.site_url}/#/billing/success"
+    MERCADOPAGO_BACK_URL           = "${var.site_url}/"
     MERCADOPAGO_MANAGE_URL         = "https://www.mercadopago.com.br/subscriptions"
     SPEECH_SYNTHESIS_ENABLED       = "true"
     SPEECH_SYNTHESIS_PROVIDER      = "google_standard"

@@ -4,8 +4,9 @@ import hashlib
 import hmac
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -160,6 +161,19 @@ class BillingService:
             raise BillingCredentialMismatchError(
                 "Mercado Pago public key and access token are from different environments"
             )
+
+    def _preapproval_back_url(self) -> str:
+        """Mercado Pago rejects or fails on SPA fragment URLs like .../#/billing/success."""
+        raw = (self.back_url or "").strip()
+        if not raw:
+            return "https://www.mercadopago.com.br"
+        parts = urlsplit(raw)
+        path = parts.path or "/"
+        return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+    @staticmethod
+    def _subscription_start_date() -> str:
+        return (datetime.now(UTC) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     async def close(self) -> None:
         await self.db.aclose()
@@ -318,6 +332,7 @@ class BillingService:
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Authenticated user email is required for subscription")
 
+        back_url = self._preapproval_back_url()
         payload: dict[str, Any] = {
             "reason": pricing["reason"],
             "external_reference": f"{user_id}:{billing_cycle}",
@@ -328,12 +343,25 @@ class BillingService:
                 "frequency_type": pricing["frequency_type"],
                 "transaction_amount": pricing["amount"],
                 "currency_id": "BRL",
+                "start_date": self._subscription_start_date(),
             },
-            "back_url": self.back_url,
+            "back_url": back_url,
             "status": "authorized",
         }
         if self.notification_url:
             payload["notification_url"] = self.notification_url
+
+        logger.info(
+            "Mercado Pago preapproval subscribe payload prepared",
+            extra={
+                "operation": "subscribe_card_token",
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "frequency": pricing["frequency"],
+                "amount": pricing["amount"],
+                "back_url_host": urlsplit(back_url).netloc,
+            },
+        )
 
         try:
             response = await self.mp.post(
@@ -372,6 +400,17 @@ class BillingService:
                 raise BillingCredentialMismatchError(
                     "Mercado Pago rejected the card token because public key and "
                     "access token are from different environments"
+                )
+            if "Both payer and collector must be real or test users" in response.text:
+                raise BillingServiceError(
+                    "Mercado Pago rejected the payer/collector pairing. "
+                    "Use a buyer email/card that is not the seller account."
+                )
+            if response.status_code >= 500:
+                raise BillingServiceError(
+                    "Mercado Pago could not authorize the subscription. "
+                    "Confirm the Lume account email is not the Mercado Pago seller "
+                    "account, use a credit card in the cardholder name, and try again."
                 )
             raise BillingServiceError(f"Mercado Pago subscribe failed: {response.text}")
 

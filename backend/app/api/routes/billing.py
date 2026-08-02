@@ -117,9 +117,19 @@ def _raise_billing_http_error(
                 "error_type": type(exc).__name__,
             },
         )
+        detail = failure_detail
+        message = str(exc)
+        if message.startswith("Mercado Pago could not authorize") or message.startswith(
+            "Mercado Pago rejected the payer/collector"
+        ):
+            detail = (
+                "O Mercado Pago recusou autorizar a assinatura. "
+                "Use um e-mail de comprador diferente da conta vendedora do Mercado Pago "
+                "e um cartão de crédito válido."
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=failure_detail,
+            detail=detail,
         ) from exc
     logger.exception(
         "Billing failed unexpectedly",

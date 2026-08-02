@@ -120,7 +120,8 @@ export function LanguageSwitcher() {
         title="Idioma estudado"
         aria-label={`Idioma estudado: ${activeDetails.name}`}
       >
-        <span>{activeDetails.flag}</span> {activeDetails.name}
+        <span aria-hidden="true">{activeDetails.flag}</span>
+        <span className="language-switch-label">{activeDetails.name}</span>
       </button>
     );
   }

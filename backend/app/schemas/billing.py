@@ -11,12 +11,12 @@ class CheckoutSessionRequest(BaseModel):
 
 
 class CheckoutSessionResponse(BaseModel):
-    public_key: str
+    checkout_url: str
+    external_subscription_id: str
     amount: float
     currency: str = "BRL"
     billing_cycle: BillingCycle
     reason: str
-    payer_email: str | None = None
     mock_checkout: bool = False
 
 

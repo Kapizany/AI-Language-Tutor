@@ -3,12 +3,12 @@ import { apiRequest } from "@/lib/api-client";
 export type BillingCycle = "monthly" | "annual";
 
 export type CheckoutSession = {
-  public_key: string;
+  checkout_url: string;
+  external_subscription_id: string;
   amount: number;
   currency: string;
   billing_cycle: BillingCycle;
   reason: string;
-  payer_email: string | null;
   mock_checkout: boolean;
 };
 
@@ -46,7 +46,6 @@ export async function subscribeWithCardToken(
   accessToken: string,
   billingCycle: BillingCycle,
   cardTokenId: string,
-  payerEmail?: string | null,
 ) {
   return apiRequest<SubscribeResponse>("/api/v1/billing/subscribe", {
     accessToken,
@@ -54,7 +53,6 @@ export async function subscribeWithCardToken(
     body: {
       billing_cycle: billingCycle,
       card_token_id: cardTokenId,
-      ...(payerEmail ? { payer_email: payerEmail } : {}),
     },
   });
 }

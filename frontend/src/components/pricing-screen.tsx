@@ -15,13 +15,11 @@ import {
 
 import { AppHeader } from "@/components/app-header";
 import { PlanComparison } from "@/components/plan-comparison";
-import { PremiumPaymentBrick } from "@/components/premium-payment-brick";
 import { Button } from "@/components/ui";
 import {
   createCheckoutSession,
   subscribeWithCardToken,
   type BillingCycle,
-  type CheckoutSession,
 } from "@/lib/billing";
 import { ApiClientError } from "@/lib/api-client";
 import type { ScreenId } from "@/lib/learner";
@@ -64,7 +62,6 @@ export function PricingScreen({
   const [cycle, setCycle] = useState<BillingCycle>("annual");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [checkoutSession, setCheckoutSession] = useState<CheckoutSession | null>(null);
   const checkoutInFlight = useRef(false);
 
   const selectedPricing = PREMIUM_PRICING[cycle];
@@ -76,7 +73,7 @@ export function PricingScreen({
     go("billing-success");
   };
 
-  const startEmbeddedCheckout = async () => {
+  const startCheckout = async () => {
     if (!session?.access_token) {
       go("login");
       return;
@@ -87,10 +84,9 @@ export function PricingScreen({
     checkoutInFlight.current = true;
     setLoading(true);
     setError("");
-    setCheckoutSession(null);
     try {
-      const nextSession = await createCheckoutSession(session.access_token, cycle);
-      if (nextSession.mock_checkout) {
+      const checkout = await createCheckoutSession(session.access_token, cycle);
+      if (checkout.mock_checkout) {
         await subscribeWithCardToken(
           session.access_token,
           cycle,
@@ -99,15 +95,14 @@ export function PricingScreen({
         await finishSubscription();
         return;
       }
-      setCheckoutSession(nextSession);
+      window.location.href = checkout.checkout_url;
     } catch (caught) {
+      checkoutInFlight.current = false;
       setError(
         caught instanceof ApiClientError
           ? caught.message
           : "Não foi possível iniciar o checkout agora.",
       );
-    } finally {
-      checkoutInFlight.current = false;
       setLoading(false);
     }
   };
@@ -141,7 +136,6 @@ export function PricingScreen({
           className={cycle === "monthly" ? "active" : ""}
           onClick={() => {
             setCycle("monthly");
-            setCheckoutSession(null);
             setError("");
           }}
         >
@@ -154,7 +148,6 @@ export function PricingScreen({
           className={cycle === "annual" ? "active" : ""}
           onClick={() => {
             setCycle("annual");
-            setCheckoutSession(null);
             setError("");
           }}
         >
@@ -222,42 +215,14 @@ export function PricingScreen({
               </strong>
               <small>
                 Cobrança real de {formatBrl(selectedPricing.amount)}. Renovação automática até
-                cancelar. Pagamento com cartão embutido no Lume.
+                cancelar. Você conclui o pagamento no checkout seguro do Mercado Pago — não
+                precisa ter conta MP antes; pode criar ou entrar na hora.
               </small>
             </div>
 
-            {!checkoutSession ? (
-              <Button full onClick={() => void startEmbeddedCheckout()} disabled={loading}>
-                {loading ? "Preparando pagamento..." : "Pagar com cartão"}
-              </Button>
-            ) : session?.access_token ? (
-              <>
-                {error && (
-                  <div className="form-message form-error" role="alert">
-                    {error}
-                  </div>
-                )}
-                <PremiumPaymentBrick
-                  key={`${checkoutSession.billing_cycle}-${checkoutSession.amount}`}
-                  accessToken={session.access_token}
-                  session={checkoutSession}
-                  onSuccess={() => {
-                    void finishSubscription();
-                  }}
-                  onError={(message) => setError(message)}
-                />
-                <button
-                  type="button"
-                  className="text-link"
-                  onClick={() => {
-                    setCheckoutSession(null);
-                    setError("");
-                  }}
-                >
-                  Voltar e escolher outro ciclo
-                </button>
-              </>
-            ) : null}
+            <Button full onClick={() => void startCheckout()} disabled={loading}>
+              {loading ? "Redirecionando..." : "Assinar no Mercado Pago"}
+            </Button>
 
             <ul className="pricing-trust-row">
               {CHECKOUT_TRUST_ITEMS.map((item) => (

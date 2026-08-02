@@ -49,15 +49,15 @@ async def test_checkout_session_requires_authentication() -> None:
 
 
 @pytest.mark.asyncio
-async def test_checkout_session_returns_public_key_and_amount() -> None:
+async def test_checkout_session_returns_redirect_url() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.create_checkout_session.return_value = {
-        "public_key": "TEST-public-key",
+        "checkout_url": "https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=abc",
+        "external_subscription_id": "preapproval-abc",
         "amount": 5.0,
         "currency": "BRL",
         "billing_cycle": "annual",
-        "reason": "Lume Tutor Premium anual",
-        "payer_email": "learner@example.test",
+        "reason": "Lume Tutor Premium - Anual",
         "mock_checkout": False,
     }
 
@@ -80,14 +80,17 @@ async def test_checkout_session_returns_public_key_and_amount() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["public_key"] == "TEST-public-key"
+    assert payload["checkout_url"].startswith(
+        "https://www.mercadopago.com.br/subscriptions/checkout"
+    )
+    assert payload["external_subscription_id"] == "preapproval-abc"
     assert payload["amount"] == 5.0
     assert payload["mock_checkout"] is False
     billing.create_checkout_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_subscribe_activates_premium_with_card_token() -> None:
+async def test_subscribe_activates_premium_in_mock_mode() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.create_subscription_with_card_token.return_value = {
         "plan_id": "premium",

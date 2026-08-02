@@ -130,13 +130,58 @@ async def test_subscribe_rejects_when_payer_email_matches_collector() -> None:
             lambda request: httpx.Response(
                 200,
                 request=request,
-                json={"email": "seller@example.com"},
+                json={"email": "seller@example.com", "identification": {"number": "123"}},
             )
         ),
     )
     try:
         with pytest.raises(BillingSellerIsBuyerError):
-            await service._assert_payer_is_not_collector("seller@example.com")
+            await service._assert_buyer_is_not_collector(
+                "seller@example.com",
+                {"cardholder": {"identification": {"number": "999"}}},
+            )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_rejects_when_cardholder_matches_collector() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_billing_enabled=True,
+            mercadopago_access_token="APP_USR-production-token",
+            mercadopago_public_key="APP_USR-public-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+        )
+    )
+    await service.mp.aclose()
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                request=request,
+                json={
+                    "email": "seller@example.com",
+                    "identification": {"number": "32502129893", "type": "CPF"},
+                },
+            )
+        ),
+    )
+    try:
+        with pytest.raises(BillingSellerIsBuyerError):
+            await service._assert_buyer_is_not_collector(
+                "buyer@example.com",
+                {
+                    "cardholder": {
+                        "name": "GABRIEL CAPIZANI",
+                        "identification": {"number": "325.021.298-93", "type": "CPF"},
+                    }
+                },
+            )
     finally:
         await service.close()
 
@@ -191,7 +236,7 @@ async def test_card_token_must_be_accessible_with_configured_access_token() -> N
     )
     try:
         with pytest.raises(BillingCredentialMismatchError):
-            await service._validate_card_token("card-token-from-another-app")
+            await service._load_card_token("card-token-from-another-app")
     finally:
         await service.close()
 
@@ -213,7 +258,7 @@ async def test_card_token_validation_preserves_provider_request_id() -> None:
     )
     try:
         with pytest.raises(BillingProviderError) as raised:
-            await service._validate_card_token("card-token")
+            await service._load_card_token("card-token")
         assert raised.value.status_code == 500
         assert raised.value.request_id == "mp-request-123"
     finally:
@@ -293,7 +338,7 @@ async def test_billing_rpc_accepts_no_content_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_subscription_with_card_token_authorizes_preapproval() -> None:
+async def test_create_checkout_session_creates_pending_redirect() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(
         Settings(
@@ -305,6 +350,7 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
             supabase_service_role_key="service-role-key",
             mercadopago_mock_checkout=False,
             mercadopago_test_checkout=False,
+            mercadopago_back_url="https://ai-language-tutor.caps-labs.com/",
         )
     )
     await service.db.aclose()
@@ -315,62 +361,39 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
 
     def db_handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if path.endswith("/billing_checkouts"):
+            return httpx.Response(200, request=request, json=[])
         if path.endswith("/rpc/reserve_billing_checkout_attempt"):
             rpc_calls.append("reserve")
             return httpx.Response(200, request=request, json={"allowed": True})
         if path.endswith("/rpc/create_billing_checkout"):
             rpc_calls.append("create_checkout")
             return httpx.Response(204, request=request)
-        if path.endswith("/rpc/process_billing_event"):
-            rpc_calls.append("process_event")
-            return httpx.Response(
-                200,
-                request=request,
-                json={
-                    "updated": True,
-                    "plan_id": "premium",
-                    "subscription_status": "active",
-                },
-            )
         return httpx.Response(500, request=request, json={"error": path})
 
     def mp_handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and "/v1/card_tokens/" in request.url.path:
+        if request.method == "GET" and request.url.path == "/users/me":
             return httpx.Response(
                 200,
                 request=request,
-                json={"id": "card-token-abc123", "status": "active"},
+                json={"email": "seller@example.com", "identification": {"number": "123"}},
             )
         if request.method == "POST" and request.url.path.endswith("/preapproval"):
             idempotency_keys.append(request.headers["X-Idempotency-Key"])
             payload = json.loads(request.content)
-            assert payload["status"] == "authorized"
-            assert payload["card_token_id"] == "card-token-abc123"
+            assert payload["status"] == "pending"
+            assert "card_token_id" not in payload
             assert payload["payer_email"] == "learner@example.test"
             assert payload["auto_recurring"]["transaction_amount"] == 5.0
-            assert "start_date" not in payload["auto_recurring"]
-            assert "end_date" not in payload["auto_recurring"]
-            assert "#" not in payload["back_url"]
+            assert payload["back_url"].endswith("#/billing/success")
             return httpx.Response(
                 201,
                 request=request,
                 json={
                     "id": "preapproval-999",
-                    "status": "authorized",
+                    "status": "pending",
+                    "init_point": "https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=preapproval-999",
                     "external_reference": f"{user_id}:monthly",
-                    "payer_id": 42,
-                },
-            )
-        if request.method == "GET" and "/preapproval/" in request.url.path:
-            return httpx.Response(
-                200,
-                request=request,
-                json={
-                    "id": "preapproval-999",
-                    "status": "authorized",
-                    "external_reference": f"{user_id}:monthly",
-                    "payer_id": 42,
-                    "next_payment_date": None,
                 },
             )
         return httpx.Response(500, request=request, text=f"unexpected {request.url}")
@@ -385,28 +408,23 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
         transport=httpx.MockTransport(mp_handler),
     )
     try:
-        result = await service.create_subscription_with_card_token(
+        result = await service.create_checkout_session(
             user_id=user_id,
             user_email="learner@example.test",
             billing_cycle="monthly",
-            card_token_id="card-token-abc123",
         )
-        assert result["plan_id"] == "premium"
+        assert result["checkout_url"].startswith(
+            "https://www.mercadopago.com.br/subscriptions/checkout"
+        )
         assert result["external_subscription_id"] == "preapproval-999"
         assert result["billing_cycle"] == "monthly"
-        assert rpc_calls == ["reserve", "create_checkout", "process_event"]
+        assert rpc_calls == ["reserve", "create_checkout"]
         assert idempotency_keys == [
-            service._subscription_idempotency_key(
+            service._pending_checkout_idempotency_key(
                 user_id=user_id,
                 billing_cycle="monthly",
-                card_token_id="card-token-abc123",
             )
         ]
-        assert idempotency_keys[0] != service._subscription_idempotency_key(
-            user_id=user_id,
-            billing_cycle="monthly",
-            card_token_id="different-card-token",
-        )
     finally:
         await service.close()
 

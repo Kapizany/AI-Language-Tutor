@@ -98,10 +98,7 @@ def _raise_billing_http_error(
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Não é possível assinar com o mesmo e-mail da conta vendedora do Mercado Pago. "
-                "Entre com outra conta Lume (e-mail de comprador) e tente novamente."
-            ),
+            detail=str(exc),
         ) from exc
     if isinstance(exc, BillingSubscriptionNotFoundError):
         raise HTTPException(
@@ -150,10 +147,19 @@ def _raise_billing_http_error(
                 "upstream_request_id": exc.request_id,
             },
         )
-        detail = (
-            "O Mercado Pago não conseguiu processar a assinatura agora. "
-            "Tente novamente em alguns minutos."
-        )
+        if operation == "subscribe_card_token" and exc.status_code == 500:
+            detail = (
+                "O Mercado Pago recusou criar a assinatura (erro interno). "
+                "Verifique se a public key e o access token são da mesma aplicação "
+                "do Mercado Pago com Assinaturas habilitadas, se o e-mail informado "
+                "no checkout corresponde à conta Mercado Pago do titular do cartão, "
+                "e se o cartão não pertence à conta vendedora."
+            )
+        else:
+            detail = (
+                "O Mercado Pago não conseguiu processar a assinatura agora. "
+                "Tente novamente em alguns minutos."
+            )
         if exc.request_id:
             detail += f" Código de suporte: {exc.request_id}."
         raise HTTPException(

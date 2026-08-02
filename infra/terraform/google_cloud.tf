@@ -9,9 +9,11 @@ locals {
   ])
 
   backend_secret_ids = {
-    GEMINI_API_KEY            = "gemini-api-key"
-    DEEPSEEK_API_KEY          = "deepseek-api-key"
-    SUPABASE_SERVICE_ROLE_KEY = "supabase-service-role-key"
+    GEMINI_API_KEY             = "gemini-api-key"
+    DEEPSEEK_API_KEY           = "deepseek-api-key"
+    SUPABASE_SERVICE_ROLE_KEY  = "supabase-service-role-key"
+    MERCADOPAGO_ACCESS_TOKEN   = "mercadopago-access-token"
+    MERCADOPAGO_WEBHOOK_SECRET = "mercadopago-webhook-secret"
   }
 
   backend_environment = {
@@ -32,6 +34,11 @@ locals {
     DEEPSEEK_MODEL                  = "deepseek-v4-flash"
     DEEPSEEK_INPUT_USD_PER_MILLION  = "0.14"
     DEEPSEEK_OUTPUT_USD_PER_MILLION = "0.28"
+    MERCADOPAGO_BILLING_ENABLED     = "true"
+    MERCADOPAGO_MOCK_CHECKOUT       = "false"
+    MERCADOPAGO_NOTIFICATION_URL    = "${var.backend_public_url}/api/v1/billing/webhook"
+    MERCADOPAGO_BACK_URL            = "${var.site_url}/#/billing/success"
+    MERCADOPAGO_MANAGE_URL          = "https://www.mercadopago.com.br/subscriptions"
   }
 }
 
@@ -164,6 +171,11 @@ resource "google_cloud_run_v2_service" "backend" {
     precondition {
       condition     = var.backend_supabase_url != null && startswith(var.backend_supabase_url, "https://")
       error_message = "backend_supabase_url must be an HTTPS URL when Cloud Run is enabled."
+    }
+
+    precondition {
+      condition     = var.backend_public_url != null && startswith(var.backend_public_url, "https://")
+      error_message = "backend_public_url must be an HTTPS URL when Cloud Run is enabled."
     }
   }
 

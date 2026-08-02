@@ -256,7 +256,9 @@ where user_id = '00000000-0000-0000-0000-000000000000'
 - Audit: administrative mutations from `admin_audit_logs`
 
 Learners see their own plan usage under **Profile → Plano e metas**
-(`GET /api/v1/account/entitlements`).
+(`GET /api/v1/account/entitlements`). Premium self-serve checkout uses
+**Mercado Pago** at `#/pricing` (R$ 19,90/mês or R$ 189,90/ano). Configure
+`MERCADOPAGO_*` in the backend — see [`docs/adr/0011-premium-billing-mercadopago.md`](docs/adr/0011-premium-billing-mercadopago.md).
 
 Further design notes: [`docs/adr/0010-plans-entitlements-and-admin.md`](docs/adr/0010-plans-entitlements-and-admin.md).
 

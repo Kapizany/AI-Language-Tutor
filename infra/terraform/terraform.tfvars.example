@@ -27,6 +27,7 @@ google_region       = "us-east1"
 enable_cloud_run_backend = false
 backend_container_image  = null
 backend_supabase_url      = "https://replace-with-project-ref.supabase.co"
+backend_public_url        = "https://replace-with-cloud-run-or-api-domain.example.com"
 backend_allowed_origins = [
   "https://ai-language-tutor.caps-labs.com",
   "https://ai-language-tutor-development.pages.dev",

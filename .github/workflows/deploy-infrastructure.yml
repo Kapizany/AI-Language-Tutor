@@ -32,6 +32,7 @@ jobs:
       TF_VAR_enable_google_cloud: "true"
       TF_VAR_enable_cloud_run_backend: ${{ vars.ENABLE_CLOUD_RUN_BACKEND || 'false' }}
       TF_VAR_backend_supabase_url: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      TF_VAR_backend_public_url: ${{ vars.BACKEND_PUBLIC_URL }}
       TF_VAR_backend_allowed_origins: '["https://ai-language-tutor.caps-labs.com","https://ai-language-tutor-development.pages.dev"]'
       TF_VAR_enable_google_billing_budget: ${{ vars.ENABLE_GCP_BILLING_BUDGET || 'false' }}
       TF_VAR_google_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID }}
@@ -54,10 +55,14 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Validate required configuration
+        env:
+          MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
+          MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
         run: |
           test -n "$TF_VAR_google_project_id"
           test -n "$TF_VAR_google_region"
           test -n "$TF_VAR_backend_supabase_url"
+          test -n "$TF_VAR_backend_public_url"
           test -n "${{ vars.GCP_TERRAFORM_STATE_BUCKET }}"
           test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
           test -n "${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"
@@ -66,6 +71,8 @@ jobs:
           test -n "$TF_VAR_supabase_database_password"
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$MERCADOPAGO_ACCESS_TOKEN"
+          test -n "$MERCADOPAGO_WEBHOOK_SECRET"
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -82,6 +89,9 @@ jobs:
           registry: ${{ env.TF_VAR_google_region }}-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Build and push initial backend image
         env:
@@ -107,6 +117,20 @@ jobs:
       - name: Validate
         working-directory: infra/terraform
         run: terraform validate
+
+      - name: Create secret containers
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve -target=google_secret_manager_secret.backend
+
+      - name: Add Mercado Pago secret versions
+        env:
+          MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
+          MERCADOPAGO_WEBHOOK_SECRET: ${{ secrets.MERCADOPAGO_WEBHOOK_SECRET }}
+        run: |
+          printf '%s' "$MERCADOPAGO_ACCESS_TOKEN" |
+            gcloud secrets versions add "mercadopago-access-token-${TF_VAR_environment}" --data-file=-
+          printf '%s' "$MERCADOPAGO_WEBHOOK_SECRET" |
+            gcloud secrets versions add "mercadopago-webhook-secret-${TF_VAR_environment}" --data-file=-
 
       - name: Plan
         working-directory: infra/terraform

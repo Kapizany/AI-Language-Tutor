@@ -124,6 +124,13 @@ variable "backend_supabase_url" {
   nullable    = true
 }
 
+variable "backend_public_url" {
+  description = "Canonical public HTTPS URL of the backend, used by external webhooks."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "backend_allowed_origins" {
   description = "Browser origins allowed to call the FastAPI backend."
   type        = list(string)

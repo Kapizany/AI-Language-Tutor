@@ -39,6 +39,21 @@ Terraform creates the Google Secret Manager resources but deliberately does not
 manage secret versions. Putting secret values in Terraform variables would
 persist them in state even when marked `sensitive`.
 
+The backend currently consumes these secret containers:
+
+- `gemini-api-key-<environment>`;
+- `deepseek-api-key-<environment>`;
+- `supabase-service-role-key-<environment>`;
+- `mercadopago-access-token-<environment>`;
+- `mercadopago-webhook-secret-<environment>`.
+
+The infrastructure workflow receives both Mercado Pago values from GitHub
+Environment secrets, adds Secret Manager versions outside Terraform state, and
+then deploys Cloud Run. Configure `MERCADOPAGO_ACCESS_TOKEN` and
+`MERCADOPAGO_WEBHOOK_SECRET` as GitHub Environment secrets, plus
+`BACKEND_PUBLIC_URL` as a GitHub Environment variable. Never use `TF_VAR_*` for
+the secret values.
+
 ## Configure
 
 ```bash

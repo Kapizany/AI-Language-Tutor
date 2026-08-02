@@ -419,12 +419,8 @@ async def test_create_checkout_session_creates_pending_redirect() -> None:
         assert result["external_subscription_id"] == "preapproval-999"
         assert result["billing_cycle"] == "monthly"
         assert rpc_calls == ["reserve", "create_checkout"]
-        assert idempotency_keys == [
-            service._pending_checkout_idempotency_key(
-                user_id=user_id,
-                billing_cycle="monthly",
-            )
-        ]
+        assert len(idempotency_keys) == 1
+        assert len(idempotency_keys[0]) == 36
     finally:
         await service.close()
 

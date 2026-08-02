@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -323,17 +323,16 @@ class BillingService:
         )
 
     @staticmethod
-    def _pending_checkout_idempotency_key(
+    def _checkout_external_reference(
         *,
         user_id: UUID,
         billing_cycle: BillingCycle,
+        attempt_suffix: str | None = None,
     ) -> str:
-        return str(
-            uuid5(
-                NAMESPACE_URL,
-                f"lume:mercadopago:preapproval-pending:{user_id}:{billing_cycle}",
-            )
-        )
+        base = f"{user_id}:{billing_cycle}"
+        if attempt_suffix:
+            return f"{base}:{attempt_suffix}"
+        return base
 
     def _pending_preapproval_payload(
         self,
@@ -341,11 +340,13 @@ class BillingService:
         user_id: UUID,
         payer_email: str,
         billing_cycle: BillingCycle,
+        external_reference: str | None = None,
     ) -> dict[str, Any]:
         pricing = PRICING[billing_cycle]
         payload: dict[str, Any] = {
             "reason": pricing["reason"],
-            "external_reference": f"{user_id}:{billing_cycle}",
+            "external_reference": external_reference
+            or self._checkout_external_reference(user_id=user_id, billing_cycle=billing_cycle),
             "payer_email": payer_email,
             "auto_recurring": {
                 "frequency": pricing["frequency"],
@@ -409,8 +410,45 @@ class BillingService:
         if not preapproval_id:
             return None
 
+        return await self._checkout_from_preapproval(
+            user_id=user_id,
+            billing_cycle=billing_cycle,
+            preapproval_id=str(preapproval_id),
+            persist_checkout=False,
+        )
+
+    async def _search_preapprovals_by_external_reference(
+        self,
+        external_reference: str,
+    ) -> list[dict[str, Any]]:
         try:
-            preapproval = await self.fetch_preapproval(str(preapproval_id))
+            response = await self.mp.get(
+                "/preapproval/search",
+                params={"external_reference": external_reference},
+            )
+        except httpx.HTTPError:
+            return []
+        if response.status_code >= 400:
+            return []
+        try:
+            body = response.json()
+        except ValueError:
+            return []
+        results = body.get("results") if isinstance(body, dict) else None
+        if not isinstance(results, list):
+            return []
+        return [row for row in results if isinstance(row, dict)]
+
+    async def _checkout_from_preapproval(
+        self,
+        *,
+        user_id: UUID,
+        billing_cycle: BillingCycle,
+        preapproval_id: str,
+        persist_checkout: bool,
+    ) -> dict[str, str] | None:
+        try:
+            preapproval = await self.fetch_preapproval(preapproval_id)
         except BillingServiceError:
             return None
 
@@ -439,22 +477,68 @@ class BillingService:
             if update_response.status_code >= 400:
                 return None
 
+        if persist_checkout:
+            await self._rpc(
+                "create_billing_checkout",
+                {
+                    "p_user_id": str(user_id),
+                    "p_billing_cycle": billing_cycle,
+                    "p_external_subscription_id": str(preapproval_id),
+                },
+            )
+
         return {
             "checkout_url": str(checkout_url),
             "external_subscription_id": str(preapproval_id),
         }
 
-    async def _create_pending_checkout(
+    async def _recover_remote_pending_checkout(
+        self,
+        *,
+        user_id: UUID,
+        billing_cycle: BillingCycle,
+    ) -> dict[str, str] | None:
+        external_reference = self._checkout_external_reference(
+            user_id=user_id,
+            billing_cycle=billing_cycle,
+        )
+        matches = await self._search_preapprovals_by_external_reference(external_reference)
+        for preapproval in matches:
+            preapproval_id = preapproval.get("id")
+            if not preapproval_id:
+                continue
+            checkout = await self._checkout_from_preapproval(
+                user_id=user_id,
+                billing_cycle=billing_cycle,
+                preapproval_id=str(preapproval_id),
+                persist_checkout=True,
+            )
+            if checkout:
+                logger.info(
+                    "Recovered pending Mercado Pago checkout from provider search",
+                    extra={
+                        "operation": "checkout_recover_remote",
+                        "provider": "mercadopago",
+                        "billing_cycle": billing_cycle,
+                        "preapproval_id": str(preapproval_id),
+                    },
+                )
+                return checkout
+        return None
+
+    async def _post_pending_preapproval(
         self,
         *,
         user_id: UUID,
         payer_email: str,
         billing_cycle: BillingCycle,
-    ) -> dict[str, str]:
+        external_reference: str,
+    ) -> httpx.Response:
         payload = self._pending_preapproval_payload(
             user_id=user_id,
             payer_email=payer_email,
             billing_cycle=billing_cycle,
+            external_reference=external_reference,
         )
         self._log_preapproval_request(
             operation="checkout_create_pending",
@@ -463,18 +547,71 @@ class BillingService:
             payer_email_source="auth",
         )
         try:
-            response = await self.mp.post(
+            return await self.mp.post(
                 "/preapproval",
                 json=payload,
-                headers={
-                    "X-Idempotency-Key": self._pending_checkout_idempotency_key(
-                        user_id=user_id,
-                        billing_cycle=billing_cycle,
-                    )
-                },
+                headers={"X-Idempotency-Key": str(uuid4())},
             )
         except httpx.HTTPError as exc:
             raise BillingServiceError("Mercado Pago checkout transport failed") from exc
+
+    async def _create_pending_checkout(
+        self,
+        *,
+        user_id: UUID,
+        payer_email: str,
+        billing_cycle: BillingCycle,
+    ) -> dict[str, str]:
+        base_reference = self._checkout_external_reference(
+            user_id=user_id,
+            billing_cycle=billing_cycle,
+        )
+        references = [
+            base_reference,
+            self._checkout_external_reference(
+                user_id=user_id,
+                billing_cycle=billing_cycle,
+                attempt_suffix=uuid4().hex[:8],
+            ),
+        ]
+        last_response: httpx.Response | None = None
+        last_payload: dict[str, Any] | None = None
+
+        for index, external_reference in enumerate(references):
+            response = await self._post_pending_preapproval(
+                user_id=user_id,
+                payer_email=payer_email,
+                billing_cycle=billing_cycle,
+                external_reference=external_reference,
+            )
+            last_response = response
+            last_payload = self._pending_preapproval_payload(
+                user_id=user_id,
+                payer_email=payer_email,
+                billing_cycle=billing_cycle,
+                external_reference=external_reference,
+            )
+            if response.status_code < 400:
+                break
+            if response.status_code >= 500 and index == 0:
+                logger.warning(
+                    "Retrying Mercado Pago pending checkout with fresh external reference",
+                    extra={
+                        "operation": "checkout_create_pending",
+                        "provider": "mercadopago",
+                        "billing_cycle": billing_cycle,
+                        "http_status": response.status_code,
+                        "upstream_request_id": response.headers.get("x-request-id"),
+                    },
+                )
+                continue
+            break
+
+        if last_response is None or last_payload is None:
+            raise BillingServiceError("Mercado Pago checkout did not return a response")
+
+        response = last_response
+        payload = last_payload
 
         if response.status_code >= 400:
             self._log_preapproval_rejection(
@@ -738,6 +875,20 @@ class BillingService:
         if reusable_checkout:
             return {
                 **reusable_checkout,
+                "amount": float(pricing["amount"]),
+                "currency": "BRL",
+                "billing_cycle": billing_cycle,
+                "reason": str(pricing["reason"]),
+                "mock_checkout": False,
+            }
+
+        remote_checkout = await self._recover_remote_pending_checkout(
+            user_id=user_id,
+            billing_cycle=billing_cycle,
+        )
+        if remote_checkout:
+            return {
+                **remote_checkout,
                 "amount": float(pricing["amount"]),
                 "currency": "BRL",
                 "billing_cycle": billing_cycle,
@@ -1297,11 +1448,12 @@ class BillingService:
         fallback_user_id: UUID | None,
     ) -> tuple[UUID, str | None]:
         if external_reference:
-            user_part, _, cycle = external_reference.partition(":")
-            try:
-                return UUID(user_part), cycle or None
-            except ValueError:
-                pass
+            parts = external_reference.split(":")
+            if len(parts) >= 2:
+                try:
+                    return UUID(parts[0]), parts[1] or None
+                except ValueError:
+                    pass
 
         if fallback_user_id is not None:
             return fallback_user_id, None

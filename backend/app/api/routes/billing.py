@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -18,6 +19,8 @@ from app.services.billing import (
     BillingServiceError,
     parse_mercadopago_webhook_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
@@ -62,6 +65,13 @@ async def create_checkout(
             detail=detail,
         ) from exc
     except BillingServiceError as exc:
+        logger.warning("Checkout billing error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível iniciar o checkout agora.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Checkout failed unexpectedly")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Não foi possível iniciar o checkout agora.",

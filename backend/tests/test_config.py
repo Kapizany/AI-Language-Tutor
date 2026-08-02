@@ -16,6 +16,7 @@ def test_recommended_provider_and_prices_are_safe_defaults() -> None:
     assert settings.deepseek_input_usd_per_million == 0.14
     assert settings.deepseek_output_usd_per_million == 0.28
     assert settings.llm_max_output_tokens == 1_024
+    assert not settings.mercadopago_test_checkout
 
 
 def test_csv_settings_are_parsed() -> None:

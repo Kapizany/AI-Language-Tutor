@@ -1,5 +1,7 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +10,7 @@ from starlette.responses import Response
 
 from app.api.routes import account, admin, ai, billing, conversation, health, speech
 from app.core.config import get_settings
-from app.core.logging import configure_logging
+from app.core.logging import bind_request_context, configure_logging, reset_request_context
 from app.services.account import AccountService
 from app.services.admin import AdminService
 from app.services.auth import AuthUserVerifier
@@ -18,6 +20,8 @@ from app.services.conversation import ConversationService
 from app.services.entitlements import EntitlementService
 from app.services.provider_factory import build_gateway
 from app.services.transcription import TranscriptionService
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -64,7 +68,26 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: RequestResponseEndpoint) -> Response:
-        response = await call_next(request)
+        request_id = request.headers.get("x-request-id") or str(uuid4())
+        cloud_trace = request.headers.get("x-cloud-trace-context", "")
+        trace_id = cloud_trace.split("/", 1)[0]
+        context_tokens = bind_request_context(request_id, trace_id)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            logger.exception(
+                "Unhandled request exception",
+                extra={
+                    "operation": "http_request",
+                    "http_method": request.method,
+                    "http_path": request.url.path,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise
+        finally:
+            reset_request_context(context_tokens)
+        response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"

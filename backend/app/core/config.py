@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     mercadopago_webhook_secret: str = ""
     mercadopago_billing_enabled: bool = False
     mercadopago_mock_checkout: bool = False
+    mercadopago_test_checkout: bool = False
     mercadopago_notification_url: str = ""
     mercadopago_back_url: str = "http://localhost:3000/#/billing/success"
     mercadopago_manage_url: str = "https://www.mercadopago.com.br/subscriptions"

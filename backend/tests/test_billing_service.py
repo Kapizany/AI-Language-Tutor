@@ -5,6 +5,7 @@ import pytest
 
 from app.core.config import Settings
 from app.services.billing import (
+    MERCADOPAGO_TEST_PAYER_EMAIL,
     BillingService,
     is_mercadopago_simulation_webhook,
     parse_mercadopago_webhook_payload,
@@ -99,5 +100,37 @@ async def test_handle_notification_acknowledges_simulation_without_mercado_pago_
             "simulation": True,
             "reason": "simulation_acknowledged",
         }
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_test_checkout_always_uses_sandbox_payer_email() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_test_checkout=True,
+        )
+    )
+    try:
+        assert service._checkout_payer_email("real-user@example.com") == (
+            MERCADOPAGO_TEST_PAYER_EMAIL
+        )
+        assert service._checkout_payer_email(None) == MERCADOPAGO_TEST_PAYER_EMAIL
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_production_checkout_preserves_authenticated_user_email() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_test_checkout=False,
+        )
+    )
+    try:
+        assert service._checkout_payer_email("real-user@example.com") == "real-user@example.com"
+        assert service._checkout_payer_email(None) is None
     finally:
         await service.close()

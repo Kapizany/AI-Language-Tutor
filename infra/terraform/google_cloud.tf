@@ -19,6 +19,7 @@ locals {
   backend_environment = {
     APP_ENV                         = "production"
     APP_ALLOWED_ORIGINS             = join(",", var.backend_allowed_origins)
+    GOOGLE_CLOUD_PROJECT            = var.google_project_id
     SUPABASE_URL                    = coalesce(var.backend_supabase_url, "https://not-configured.invalid")
     LLM_PRIMARY_PROVIDER            = "gemini"
     LLM_FALLBACK_PROVIDERS          = "deepseek"
@@ -36,6 +37,7 @@ locals {
     DEEPSEEK_OUTPUT_USD_PER_MILLION = "0.28"
     MERCADOPAGO_BILLING_ENABLED     = "true"
     MERCADOPAGO_MOCK_CHECKOUT       = "false"
+    MERCADOPAGO_TEST_CHECKOUT       = tostring(var.environment != "production")
     MERCADOPAGO_NOTIFICATION_URL    = "${var.backend_public_url}/api/v1/billing/webhook"
     MERCADOPAGO_BACK_URL            = "${var.site_url}/#/billing/success"
     MERCADOPAGO_MANAGE_URL          = "https://www.mercadopago.com.br/subscriptions"

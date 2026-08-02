@@ -15,6 +15,7 @@ from app.core.config import Settings
 logger = logging.getLogger(__name__)
 
 BillingCycle = Literal["monthly", "annual"]
+MERCADOPAGO_TEST_PAYER_EMAIL = "test@testuser.com"
 
 PRICING: dict[BillingCycle, dict[str, Any]] = {
     "monthly": {
@@ -99,6 +100,7 @@ class BillingService:
             and settings.mercadopago_access_token
         )
         self.mock_checkout = settings.mercadopago_mock_checkout
+        self.test_checkout = settings.mercadopago_test_checkout
         self.access_token = settings.mercadopago_access_token.strip()
         self.webhook_secret = settings.mercadopago_webhook_secret.strip()
         self.notification_url = settings.mercadopago_notification_url
@@ -121,14 +123,28 @@ class BillingService:
             base_url="https://api.mercadopago.com",
             timeout=20,
             headers={
-                "Authorization": f"Bearer {settings.mercadopago_access_token}",
+                "Authorization": f"Bearer {self.access_token}",
                 "Content-Type": "application/json",
+            },
+        )
+        logger.info(
+            "Billing service initialized",
+            extra={
+                "operation": "billing_initialize",
+                "billing_enabled": self.enabled,
+                "mock_checkout": self.mock_checkout,
+                "test_checkout": self.test_checkout,
             },
         )
 
     @property
     def webhooks_ready(self) -> bool:
         return bool(self.db.headers.get("apikey") and self.access_token)
+
+    def _checkout_payer_email(self, user_email: str | None) -> str | None:
+        if self.test_checkout:
+            return MERCADOPAGO_TEST_PAYER_EMAIL
+        return user_email
 
     async def close(self) -> None:
         await self.db.aclose()
@@ -140,12 +156,40 @@ class BillingService:
         try:
             response = await self.db.post(f"/rpc/{name}", json=payload)
         except httpx.HTTPError as exc:
+            logger.exception(
+                "Billing RPC transport failed",
+                extra={
+                    "operation": "billing_rpc",
+                    "provider": "supabase",
+                    "rpc": name,
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise BillingServiceError(f"Billing RPC {name} transport failed") from exc
         if response.status_code >= 400:
+            logger.error(
+                "Billing RPC rejected",
+                extra={
+                    "operation": "billing_rpc",
+                    "provider": "supabase",
+                    "rpc": name,
+                    "http_status": response.status_code,
+                },
+            )
             raise BillingServiceError(f"Billing RPC {name} failed: {response.text}")
         try:
             return response.json()
         except ValueError as exc:
+            logger.exception(
+                "Billing RPC returned invalid JSON",
+                extra={
+                    "operation": "billing_rpc",
+                    "provider": "supabase",
+                    "rpc": name,
+                    "http_status": response.status_code,
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise BillingServiceError(f"Billing RPC {name} returned invalid JSON") from exc
 
     async def create_checkout(
@@ -155,6 +199,16 @@ class BillingService:
         user_email: str | None,
         billing_cycle: BillingCycle,
     ) -> dict[str, str]:
+        logger.info(
+            "Checkout creation started",
+            extra={
+                "operation": "checkout_create",
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "mock_checkout": self.mock_checkout,
+                "test_checkout": self.test_checkout,
+            },
+        )
         if self.mock_checkout:
             external_id = f"mock:{user_id}:{billing_cycle}"
             await self._rpc(
@@ -165,12 +219,29 @@ class BillingService:
                     "p_external_subscription_id": external_id,
                 },
             )
+            logger.info(
+                "Mock checkout created",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mock",
+                    "billing_cycle": billing_cycle,
+                },
+            )
             return {
                 "checkout_url": f"{self.back_url}?mock=1&cycle={billing_cycle}",
                 "external_subscription_id": external_id,
             }
 
         if not self.enabled:
+            logger.error(
+                "Checkout requested while billing is disabled",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "billing_enabled": self.enabled,
+                },
+            )
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
 
         reservation = await self._rpc(
@@ -179,6 +250,15 @@ class BillingService:
         )
         if not isinstance(reservation, dict) or not reservation.get("allowed"):
             reason = reservation.get("reason") if isinstance(reservation, dict) else None
+            logger.warning(
+                "Checkout reservation rejected",
+                extra={
+                    "operation": "checkout_reserve",
+                    "provider": "supabase",
+                    "billing_cycle": billing_cycle,
+                    "reason": reason or "invalid_response",
+                },
+            )
             if reason == "already_premium":
                 raise AlreadyPremiumError("User already has an active premium subscription")
             retry_after = None
@@ -206,8 +286,9 @@ class BillingService:
             "back_url": self.back_url,
             "status": "pending",
         }
-        if user_email:
-            payload["payer_email"] = user_email
+        payer_email = self._checkout_payer_email(user_email)
+        if payer_email:
+            payload["payer_email"] = payer_email
         if self.notification_url:
             payload["notification_url"] = self.notification_url
 
@@ -218,6 +299,16 @@ class BillingService:
                 headers={"X-Idempotency-Key": str(uuid4())},
             )
         except httpx.HTTPError as exc:
+            logger.exception(
+                "Mercado Pago checkout transport failed",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "error_type": type(exc).__name__,
+                    "test_checkout": self.test_checkout,
+                },
+            )
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Mercado Pago checkout transport failed") from exc
 
@@ -226,6 +317,13 @@ class BillingService:
                 "Mercado Pago preapproval rejected checkout status=%s body=%s",
                 response.status_code,
                 response.text[:500],
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                    "test_checkout": self.test_checkout,
+                },
             )
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError(f"Mercado Pago checkout failed: {response.text}")
@@ -233,16 +331,45 @@ class BillingService:
         try:
             body = response.json()
         except ValueError as exc:
+            logger.exception(
+                "Mercado Pago checkout returned invalid JSON",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                    "error_type": type(exc).__name__,
+                },
+            )
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Mercado Pago checkout returned invalid JSON") from exc
 
         if not isinstance(body, dict):
+            logger.error(
+                "Mercado Pago checkout returned an unexpected payload",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                },
+            )
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Mercado Pago checkout returned an unexpected payload")
 
         checkout_url = body.get("init_point") or body.get("sandbox_init_point")
         preapproval_id = body.get("id")
         if not checkout_url or not preapproval_id:
+            logger.error(
+                "Mercado Pago checkout response is incomplete",
+                extra={
+                    "operation": "checkout_create",
+                    "provider": "mercadopago",
+                    "billing_cycle": billing_cycle,
+                    "http_status": response.status_code,
+                    "reason": "missing_init_point_or_id",
+                },
+            )
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Mercado Pago checkout returned an incomplete payload")
 
@@ -259,6 +386,16 @@ class BillingService:
             await self._release_checkout_attempt(user_id)
             raise
 
+        logger.info(
+            "Checkout created successfully",
+            extra={
+                "operation": "checkout_create",
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "http_status": response.status_code,
+                "test_checkout": self.test_checkout,
+            },
+        )
         return {
             "checkout_url": str(checkout_url),
             "external_subscription_id": str(preapproval_id),
@@ -270,7 +407,15 @@ class BillingService:
                 "release_billing_checkout_attempt",
                 {"p_user_id": str(user_id)},
             )
-        except BillingServiceError:
+        except BillingServiceError as exc:
+            logger.exception(
+                "Could not release failed checkout attempt",
+                extra={
+                    "operation": "checkout_release",
+                    "provider": "supabase",
+                    "error_type": type(exc).__name__,
+                },
+            )
             return
 
     async def fetch_preapproval(self, preapproval_id: str) -> dict[str, Any]:
@@ -287,12 +432,51 @@ class BillingService:
         if not self.webhooks_ready:
             raise BillingNotConfiguredError("Mercado Pago billing is not configured")
 
-        response = await self.mp.get(f"/preapproval/{preapproval_id}")
+        try:
+            response = await self.mp.get(f"/preapproval/{preapproval_id}")
+        except httpx.HTTPError as exc:
+            logger.exception(
+                "Mercado Pago preapproval lookup transport failed",
+                extra={
+                    "operation": "preapproval_lookup",
+                    "provider": "mercadopago",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Mercado Pago lookup transport failed") from exc
         if response.status_code == 404:
+            logger.warning(
+                "Mercado Pago preapproval was not found",
+                extra={
+                    "operation": "preapproval_lookup",
+                    "provider": "mercadopago",
+                    "http_status": response.status_code,
+                },
+            )
             raise BillingServiceError(f"Preapproval {preapproval_id} was not found")
         if response.status_code >= 400:
+            logger.error(
+                "Mercado Pago preapproval lookup failed",
+                extra={
+                    "operation": "preapproval_lookup",
+                    "provider": "mercadopago",
+                    "http_status": response.status_code,
+                },
+            )
             raise BillingServiceError(f"Mercado Pago lookup failed: {response.text}")
-        body = response.json()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            logger.exception(
+                "Mercado Pago preapproval lookup returned invalid JSON",
+                extra={
+                    "operation": "preapproval_lookup",
+                    "provider": "mercadopago",
+                    "http_status": response.status_code,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Mercado Pago lookup returned invalid JSON") from exc
         if not isinstance(body, dict):
             raise BillingServiceError("Mercado Pago lookup returned invalid payload")
         return body
@@ -303,20 +487,63 @@ class BillingService:
             {"p_user_id": str(user_id)},
         )
         if not isinstance(reservation, dict) or not reservation.get("allowed"):
+            logger.warning(
+                "Subscription refresh reservation rejected",
+                extra={
+                    "operation": "subscription_refresh",
+                    "provider": "supabase",
+                    "reason": (
+                        str(reservation.get("reason"))
+                        if isinstance(reservation, dict)
+                        else "invalid_response"
+                    ),
+                },
+            )
             raise BillingRateLimitError("Too many subscription refresh attempts")
 
-        response = await self.db.get(
-            "/billing_checkouts",
-            params={
-                "user_id": f"eq.{user_id}",
-                "order": "created_at.desc",
-                "limit": "1",
-            },
-        )
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            logger.exception(
+                "Could not load pending billing checkout",
+                extra={
+                    "operation": "subscription_refresh",
+                    "provider": "supabase",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Could not load pending billing checkout") from exc
         if response.status_code >= 400:
+            logger.error(
+                "Supabase rejected pending checkout lookup",
+                extra={
+                    "operation": "subscription_refresh",
+                    "provider": "supabase",
+                    "http_status": response.status_code,
+                },
+            )
             raise BillingServiceError("Could not load pending billing checkout")
 
-        rows = response.json()
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            logger.exception(
+                "Pending checkout lookup returned invalid JSON",
+                extra={
+                    "operation": "subscription_refresh",
+                    "provider": "supabase",
+                    "http_status": response.status_code,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise BillingServiceError("Could not parse pending billing checkout") from exc
         if not isinstance(rows, list) or not rows:
             return {"updated": False, "reason": "checkout_not_found"}
 
@@ -435,7 +662,23 @@ class BillingService:
         except BillingServiceError as exc:
             message = str(exc)
             if "was not found" in message:
+                logger.warning(
+                    "Webhook referenced a missing preapproval",
+                    extra={
+                        "operation": "webhook_process",
+                        "provider": "mercadopago",
+                        "reason": "preapproval_not_found",
+                    },
+                )
                 return {"processed": False, "reason": "preapproval_not_found"}
+            logger.exception(
+                "Webhook subscription synchronization failed",
+                extra={
+                    "operation": "webhook_process",
+                    "provider": "mercadopago",
+                    "error_type": type(exc).__name__,
+                },
+            )
             return {"processed": False, "reason": "sync_failed", "detail": message}
 
     def _parse_external_reference(

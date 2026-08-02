@@ -1,6 +1,55 @@
+import json
 import logging
 
-from app.core.logging import RedactingFilter, configure_logging, redact
+from app.core.logging import (
+    CloudJsonFormatter,
+    RedactingFilter,
+    bind_request_context,
+    configure_logging,
+    redact,
+    reset_request_context,
+)
+
+
+def test_redact_removes_credentials_and_email() -> None:
+    message = (
+        "Authorization: Bearer secret-token access_token=secret-value payer=test-user@example.com"
+    )
+
+    redacted = redact(message)
+
+    assert "secret-token" not in redacted
+    assert "secret-value" not in redacted
+    assert "test-user@example.com" not in redacted
+
+
+def test_cloud_json_formatter_adds_safe_context() -> None:
+    tokens = bind_request_context("request-123", "trace-456")
+    try:
+        record = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="Checkout failed for test-user@example.com",
+            args=(),
+            exc_info=None,
+        )
+        record.operation = "checkout_create"
+        record.provider = "mercadopago"
+        record.http_status = 400
+
+        payload = json.loads(CloudJsonFormatter().format(record))
+    finally:
+        reset_request_context(tokens)
+
+    assert payload["severity"] == "ERROR"
+    assert payload["message"] == "Checkout failed for [redacted-email]"
+    assert payload["request_id"] == "request-123"
+    assert payload["trace_id"] == "trace-456"
+    assert payload["operation"] == "checkout_create"
+    assert payload["provider"] == "mercadopago"
+    assert payload["http_status"] == 400
 
 
 def test_bearer_tokens_are_redacted() -> None:

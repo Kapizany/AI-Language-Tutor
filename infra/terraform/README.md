@@ -54,6 +54,11 @@ then deploys Cloud Run. Configure `MERCADOPAGO_ACCESS_TOKEN` and
 `BACKEND_PUBLIC_URL` as a GitHub Environment variable. Never use `TF_VAR_*` for
 the secret values.
 
+For non-production Terraform environments, Cloud Run sets
+`MERCADOPAGO_TEST_CHECKOUT=true`, which keeps the Mercado Pago sandbox checkout
+enabled and sends `payer_email=test@testuser.com`. Production sets it to
+`false` and uses the authenticated learner's email.
+
 ## Configure
 
 ```bash

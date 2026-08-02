@@ -38,16 +38,43 @@ async def create_checkout(
             billing_cycle=payload.billing_cycle,
         )
     except BillingNotConfiguredError as exc:
+        logger.warning(
+            "Checkout unavailable because billing is not configured",
+            extra={
+                "operation": "checkout_create",
+                "provider": "mercadopago",
+                "billing_cycle": payload.billing_cycle,
+                "reason": "billing_not_configured",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Pagamentos ainda não estão disponíveis.",
         ) from exc
     except AlreadyPremiumError as exc:
+        logger.info(
+            "Checkout rejected for an existing Premium subscription",
+            extra={
+                "operation": "checkout_create",
+                "provider": "mercadopago",
+                "billing_cycle": payload.billing_cycle,
+                "reason": "already_premium",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Você já possui uma assinatura Premium ativa.",
         ) from exc
     except BillingRateLimitError as exc:
+        logger.warning(
+            "Checkout rate limited",
+            extra={
+                "operation": "checkout_create",
+                "provider": "supabase",
+                "billing_cycle": payload.billing_cycle,
+                "reason": "rate_limit",
+            },
+        )
         detail = "Muitas tentativas de checkout. Aguarde alguns minutos."
         if exc.retry_after_seconds:
             if exc.retry_after_seconds >= 60:
@@ -65,13 +92,28 @@ async def create_checkout(
             detail=detail,
         ) from exc
     except BillingServiceError as exc:
-        logger.warning("Checkout billing error: %s", exc)
+        logger.exception(
+            "Checkout billing operation failed",
+            extra={
+                "operation": "checkout_create",
+                "provider": "mercadopago",
+                "billing_cycle": payload.billing_cycle,
+                "error_type": type(exc).__name__,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Não foi possível iniciar o checkout agora.",
         ) from exc
     except Exception as exc:
-        logger.exception("Checkout failed unexpectedly")
+        logger.exception(
+            "Checkout failed unexpectedly",
+            extra={
+                "operation": "checkout_create",
+                "billing_cycle": payload.billing_cycle,
+                "error_type": type(exc).__name__,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Não foi possível iniciar o checkout agora.",
@@ -159,6 +201,14 @@ async def mercadopago_webhook(
         request_id=x_request_id,
         signature=x_signature,
     ):
+        logger.warning(
+            "Mercado Pago webhook signature rejected",
+            extra={
+                "operation": "webhook_verify",
+                "provider": "mercadopago",
+                "reason": "invalid_signature",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook signature.",

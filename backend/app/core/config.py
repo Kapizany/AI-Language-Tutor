@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     gemini_input_usd_per_million: float = 0.25
     gemini_output_usd_per_million: float = 1.50
 
+    mercadopago_access_token: str = ""
+    mercadopago_webhook_secret: str = ""
+    mercadopago_billing_enabled: bool = False
+    mercadopago_mock_checkout: bool = False
+    mercadopago_notification_url: str = ""
+    mercadopago_back_url: str = "http://localhost:3000/#/billing/success"
+    mercadopago_manage_url: str = "https://www.mercadopago.com.br/subscriptions"
+
     @field_validator(
         "app_allowed_origins",
         "llm_fallback_providers",
@@ -91,6 +99,13 @@ class Settings(BaseSettings):
                 "GEMINI_API_KEY": self.gemini_api_key,
                 "DEEPSEEK_API_KEY": self.deepseek_api_key,
             }
+            if self.mercadopago_billing_enabled:
+                required.update(
+                    {
+                        "MERCADOPAGO_ACCESS_TOKEN": self.mercadopago_access_token,
+                        "MERCADOPAGO_WEBHOOK_SECRET": self.mercadopago_webhook_secret,
+                    }
+                )
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError(f"Missing required production settings: {', '.join(missing)}")

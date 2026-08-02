@@ -1,8 +1,9 @@
 "use client";
 
-import { Bell, ChevronRight, ShieldCheck } from "lucide-react";
+import { Bell, ChevronRight, Crown, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { planLabel } from "@/lib/entitlements";
 import { useLearnerOptional } from "@/lib/learner-context";
 import { languageDetails, type ScreenId } from "@/lib/learner";
 
@@ -52,6 +53,14 @@ export function AppHeader({
       detail: "Você tem duas conversas por dia para praticar com o tutor.",
       screen: "scenarios",
     },
+    ...(learner?.planId !== "premium"
+      ? [{
+          id: "premium-offer",
+          title: "Desbloqueie mais prática",
+          detail: "Premium a partir de R$ 15,83/mês no anual — 10× mais conversas e voz.",
+          screen: "pricing" as ScreenId,
+        }]
+      : []),
   ];
   const unreadCount = notifications.filter((item) => !readNotifications.includes(item.id)).length;
 
@@ -81,6 +90,17 @@ export function AppHeader({
         {subtitle && <p>{subtitle}</p>}
       </div>
       <div className="app-header-tools">
+        {learner && learner.planId !== "premium" && (
+          <button
+            type="button"
+            className="plan-badge"
+            onClick={() => learner.goToPricing()}
+            title="Ver plano Premium"
+          >
+            <Crown size={14} aria-hidden="true" />
+            {planLabel(learner.planId)}
+          </button>
+        )}
         <LanguageSwitcher />
         {learner?.isAdmin && onNavigate && (
           <button

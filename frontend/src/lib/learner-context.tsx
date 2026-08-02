@@ -8,6 +8,8 @@ type LearnerContextValue = {
   preferences: LearnerPreferences | null;
   studiedLanguages: LearnerLanguage[];
   isAdmin: boolean;
+  planId: string;
+  goToPricing: () => void;
   switchLanguage: (language: TargetLanguage) => Promise<{ error?: string }>;
   addLanguage: (language: TargetLanguage, level?: LearnerLanguage["currentLevel"]) => Promise<{ error?: string }>;
 };
@@ -19,12 +21,14 @@ export function LearnerProvider({
   preferences,
   studiedLanguages,
   isAdmin,
+  planId,
+  goToPricing,
   switchLanguage,
   addLanguage,
 }: LearnerContextValue & { children: ReactNode }) {
   return (
     <LearnerContext.Provider
-      value={{ preferences, studiedLanguages, isAdmin, switchLanguage, addLanguage }}
+      value={{ preferences, studiedLanguages, isAdmin, planId, goToPricing, switchLanguage, addLanguage }}
     >
       {children}
     </LearnerContext.Provider>

@@ -44,7 +44,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AdminPanel } from "@/components/admin/admin-panel";
 import { AppHeader } from "@/components/app-header";
 import { AppNav } from "@/components/app-nav";
@@ -62,6 +62,11 @@ import {
   type ScenarioCatalogItem,
 } from "@/lib/conversation";
 import { loadEntitlements, planLabel, type EntitlementsSummary } from "@/lib/entitlements";
+import { isNearLimit, UPGRADE_HIGHLIGHTS } from "@/lib/pricing";
+import { UpgradePrompt } from "@/components/upgrade-prompt";
+import { PlanComparison } from "@/components/plan-comparison";
+import { PricingScreen } from "@/components/pricing-screen";
+import { BillingResultScreen } from "@/components/billing-result-screen";
 import { loadIsAdmin } from "@/lib/admin";
 import {
   goalLabels,
@@ -1017,7 +1022,7 @@ function Profile({
   saveSettings: (name: string, preferences: LearnerPreferences) => Promise<AuthFeedback>;
   session: Session | null;
 }) {
-  const { preferences, studiedLanguages, isAdmin, switchLanguage, addLanguage } = useLearner();
+  const { preferences, studiedLanguages, isAdmin, goToPricing, switchLanguage, addLanguage } = useLearner();
   const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
   const [name, setName] = useState(displayName);
   const [draft, setDraft] = useState<LearnerPreferences>(preferences || {
@@ -1180,6 +1185,41 @@ function Profile({
             )}
             {!entitlementsLoading && entitlements && (
               <p className="usage-note">Chamadas de IA incluem respostas do tutor, correções e exercícios. Os limites são redefinidos todo dia.</p>
+            )}
+            {!entitlementsLoading && entitlements?.plan_id === "free" && (
+              <UpgradePrompt
+                title="Pratique sem travar no limite"
+                message="Premium é para quem quer estudar todo dia com conversas longas e muito mais prática por voz."
+                onUpgrade={goToPricing}
+                ctaLabel="Assinar Premium"
+                highlights={UPGRADE_HIGHLIGHTS}
+              />
+            )}
+            {!entitlementsLoading && entitlements?.plan_id === "premium" && entitlements.subscription_ends_at && (
+              <p className="usage-note">
+                Seu Premium permanece ativo até {new Date(entitlements.subscription_ends_at).toLocaleDateString("pt-BR")}.
+              </p>
+            )}
+            {!entitlementsLoading && entitlements?.can_manage_billing && (
+              <p className="usage-note">
+                Gerencie ou cancele sua assinatura no{" "}
+                <a href="https://www.mercadopago.com.br/subscriptions" target="_blank" rel="noreferrer">
+                  Mercado Pago
+                </a>
+                . O acesso continua até o fim do período pago.
+              </p>
+            )}
+            {entitlements && !entitlementsLoading && entitlements.plan_id === "free" && (
+              <PlanComparison variant="compact" currentPlan="free" highlightColumn="premium" />
+            )}
+            {entitlements && isNearLimit(entitlements.usage.conversation_sessions.used, entitlements.usage.conversation_sessions.limit) && entitlements.plan_id === "free" && (
+              <UpgradePrompt
+                compact
+                title="Você está perto do limite diário"
+                message={`Hoje: ${entitlements.usage.conversation_sessions.used}/${entitlements.usage.conversation_sessions.limit} conversas.`}
+                onUpgrade={goToPricing}
+                ctaLabel="Liberar mais conversas"
+              />
             )}
             {entitlementsError && <div className="form-message form-error" role="alert">{entitlementsError}</div>}
             <div className="form-grid">
@@ -2027,6 +2067,16 @@ export default function ProductPrototype() {
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [planId, setPlanId] = useState("free");
+
+  const refreshPlan = useCallback(async (accessToken: string) => {
+    try {
+      const summary = await loadEntitlements(accessToken);
+      setPlanId(summary.plan_id);
+    } catch {
+      setPlanId("free");
+    }
+  }, []);
 
   const refreshAdminAccess = async (userId: string | undefined) => {
     if (!userId) {
@@ -2113,7 +2163,10 @@ export default function ProductPrototype() {
         await Promise.all([
           loadStudiedLanguages(currentSession.user.id, mappedPreferences),
           refreshAdminAccess(currentSession.user.id),
+          refreshPlan(currentSession.access_token),
         ]);
+      } else {
+        setPlanId("free");
       }
 
       const fromHash = window.location.hash.replace("#/", "") as ScreenId;
@@ -2186,7 +2239,7 @@ export default function ProductPrototype() {
       active = false;
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshPlan]);
 
   // O catálogo de cenários vem do banco, então adicionar ou despublicar um
   // cenário não exige republicar o frontend.
@@ -2493,6 +2546,7 @@ export default function ProductPrototype() {
     setSession(null);
     setPreferences(null);
     setOnboardingCompleted(false);
+    setPlanId("free");
     go("landing");
   };
 
@@ -2532,15 +2586,18 @@ export default function ProductPrototype() {
       case "scenarios": return <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
       case "conversation":
         return selectedScenario
-          ? <Conversation key={selectedScenario.id} scenario={selectedScenario} preferences={preferences} session={session} goBack={() => go("scenarios")} onCompleted={conversationCompleted}/>
+          ? <Conversation key={selectedScenario.id} scenario={selectedScenario} preferences={preferences} session={session} planId={planId} goBack={() => go("scenarios")} onUpgrade={() => go("pricing")} onCompleted={conversationCompleted}/>
           : <Scenarios go={go} displayName={displayName} preferences={preferences} scenarios={scenarios} catalogError={catalogError} reloadCatalog={() => setCatalogVersion((value) => value + 1)} selectScenario={selectScenario}/>;
-      case "summary": return <ConversationSummary completed={completedConversation} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
+      case "summary": return <ConversationSummary completed={completedConversation} planId={planId} onUpgrade={() => go("pricing")} goToScenarios={() => go("scenarios")} goToDashboard={() => go("dashboard")} goToSessions={() => go("sessions")}/>;
       case "sessions": return <SessionHistory displayName={displayName} preferences={preferences} session={session} scenarios={scenarios} go={go} resumeScenario={selectScenario}/>;
       case "vocabulary": return <LearningCenter key={`review-${preferences?.targetLanguage || "en"}`} displayName={displayName} preferences={preferences} session={session} initialMode="review" goToScenarios={() => go("scenarios")}/>;
       case "assessment": return <Assessment displayName={displayName} preferences={preferences}/>;
       case "progress": return <Progress displayName={displayName} preferences={preferences} session={session}/>;
       case "profile": return <Profile key={`${preferences?.targetLanguage}-${preferences?.currentLevel}`} go={go} displayName={displayName} email={session?.user.email || ""} saveSettings={saveSettings} session={session}/>;
       case "privacy": return <Privacy session={session} accountDeleted={accountDeleted}/>;
+      case "pricing": return <PricingScreen session={session} displayName={displayName} go={go}/>;
+      case "billing-success": return <BillingResultScreen session={session} variant="success" go={(id) => { if (session?.access_token) void refreshPlan(session.access_token); go(id); }}/>;
+      case "billing-cancel": return <BillingResultScreen session={session} variant="cancel" go={go}/>;
       case "admin": return session ? <AdminPanel session={session} go={go}/> : null;
     }
   })();
@@ -2550,6 +2607,8 @@ export default function ProductPrototype() {
       preferences={preferences}
       studiedLanguages={studiedLanguages}
       isAdmin={isAdmin}
+      planId={planId}
+      goToPricing={() => go("pricing")}
       switchLanguage={switchLanguage}
       addLanguage={addLanguage}
     >
@@ -2559,7 +2618,7 @@ export default function ProductPrototype() {
           Ir para o conteúdo
         </a>
       )}
-      {appScreens.has(screen) && screen !== "conversation" && <AppNav current={screen} go={go} displayName={displayName} signOut={signOut}/>}
+      {appScreens.has(screen) && screen !== "conversation" && screen !== "pricing" && screen !== "billing-success" && screen !== "billing-cancel" && <AppNav current={screen} go={go} displayName={displayName} signOut={signOut}/>}
       <div
         id="app-main"
         tabIndex={-1}

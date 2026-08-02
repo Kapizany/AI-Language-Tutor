@@ -16,6 +16,8 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, ProgressRing } from "@/components/ui";
+import { UpgradePrompt } from "@/components/upgrade-prompt";
+import { UPGRADE_HIGHLIGHTS } from "@/lib/pricing";
 import { renderScenarioIcon } from "@/components/scenario-icons";
 import {
   abandonConversation,
@@ -65,12 +67,16 @@ export function Conversation({
   session,
   goBack,
   onCompleted,
+  onUpgrade,
+  planId = "free",
 }: {
   scenario: ScenarioCatalogItem;
   preferences: LearnerPreferences | null;
   session: Session | null;
   goBack: () => void;
   onCompleted: (completed: CompletedConversationView) => void;
+  onUpgrade?: () => void;
+  planId?: string;
 }) {
   const accessToken = session?.access_token || "";
   const targetLanguage = preferences?.targetLanguage || "en";
@@ -450,6 +456,8 @@ export function Conversation({
   };
 
   if (startupError) {
+    const dailyLimitHit = startupError.includes("limite diário de conversas");
+    const showUpgrade = planId !== "premium" && Boolean(onUpgrade);
     return (
       <div className="conversation-screen">
         <header className="conversation-header">
@@ -464,6 +472,16 @@ export function Conversation({
           <div className="form-message form-error" role="alert">
             {startupError}
           </div>
+          {showUpgrade && dailyLimitHit && onUpgrade && (
+            <UpgradePrompt
+              title="Quer praticar mais hoje?"
+              message="Você atingiu o limite diário do Free. No Premium, a prática não para cedo."
+              onUpgrade={onUpgrade}
+              ctaLabel="Ver planos Premium"
+              highlights={UPGRADE_HIGHLIGHTS}
+              compact
+            />
+          )}
           <Button onClick={goBack} icon={<ArrowLeft size={17} />}>
             Escolher outro cenário
           </Button>
@@ -626,6 +644,16 @@ export function Conversation({
           {reachedMessageLimit ? (
             <div className="compose-limit">
               <strong>Esta conversa chegou ao limite de mensagens.</strong>
+              {planId !== "premium" && onUpgrade && (
+                <UpgradePrompt
+                  compact
+                  title="Conversas mais longas no Premium"
+                  message="Esta conversa chegou ao limite de mensagens do Free. Premium dobra a profundidade de cada sessão."
+                  onUpgrade={onUpgrade}
+                  ctaLabel="Assinar Premium"
+                  highlights={UPGRADE_HIGHLIGHTS}
+                />
+              )}
               <Button onClick={() => void endSession()} disabled={ending}>
                 {ending ? "Gerando resumo..." : "Encerrar e ver o resumo"}
               </Button>
@@ -826,11 +854,15 @@ export function ConversationSummary({
   goToScenarios,
   goToDashboard,
   goToSessions,
+  onUpgrade,
+  planId = "free",
 }: {
   completed: CompletedConversationView | null;
   goToScenarios: () => void;
   goToDashboard: () => void;
   goToSessions: () => void;
+  onUpgrade?: () => void;
+  planId?: string;
 }) {
   if (!completed) {
     return (
@@ -943,6 +975,15 @@ export function ConversationSummary({
           </div>
         </main>
         <aside>
+          {planId !== "premium" && onUpgrade && (
+            <UpgradePrompt
+              title="Gostou da prática?"
+              message="Mantenha o ritmo amanhã com muito mais conversa, voz e feedback do tutor."
+              onUpgrade={onUpgrade}
+              ctaLabel="Ver Premium"
+              highlights={UPGRADE_HIGHLIGHTS}
+            />
+          )}
           <div className="next-card">
             <span className="eyebrow">PRÓXIMO PASSO</span>
             <div className="next-icon">

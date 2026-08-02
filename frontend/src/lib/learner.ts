@@ -18,6 +18,9 @@ export type ScreenId =
   | "progress"
   | "profile"
   | "privacy"
+  | "pricing"
+  | "billing-success"
+  | "billing-cancel"
   | "admin";
 
 export type IconType = React.ComponentType<{ size?: number; strokeWidth?: number }>;

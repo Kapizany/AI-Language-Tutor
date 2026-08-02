@@ -15,6 +15,11 @@ class EntitlementsSummary(BaseModel):
     plan_id: str
     account_status: str
     max_learner_messages_per_session: int
+    subscription_status: str = "active"
+    subscription_ends_at: datetime | None = None
+    billing_cycle: str | None = None
+    subscription_source: str = "system"
+    can_manage_billing: bool = False
     usage: dict[str, UsageCounter]
 
 

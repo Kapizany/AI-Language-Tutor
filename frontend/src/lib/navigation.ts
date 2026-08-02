@@ -11,6 +11,9 @@ const privateScreens = new Set([
   "progress",
   "profile",
   "privacy",
+  "pricing",
+  "billing-success",
+  "billing-cancel",
   "admin",
 ]);
 

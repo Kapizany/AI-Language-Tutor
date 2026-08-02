@@ -6,12 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.api.routes import account, admin, ai, conversation, health, speech
+from app.api.routes import account, admin, ai, billing, conversation, health, speech
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.account import AccountService
 from app.services.admin import AdminService
 from app.services.auth import AuthUserVerifier
+from app.services.billing import BillingService
 from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.entitlements import EntitlementService
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.account_service = AccountService(settings)
     app.state.entitlement_service = EntitlementService(settings)
     app.state.admin_service = AdminService(settings)
+    app.state.billing_service = BillingService(settings)
     app.state.conversation_service = ConversationService(settings)
     app.state.transcription_service = TranscriptionService(settings)
     yield
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.account_service.close()
     await app.state.entitlement_service.close()
     await app.state.admin_service.close()
+    await app.state.billing_service.close()
     await app.state.conversation_service.close()
     await app.state.transcription_service.close()
 
@@ -77,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(account.router)
     app.include_router(admin.router)
+    app.include_router(billing.router)
     app.include_router(ai.router)
     app.include_router(conversation.router)
     app.include_router(speech.router)

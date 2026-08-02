@@ -6,6 +6,7 @@ from app.core.security import get_current_user
 from app.schemas.auth import AuthenticatedUser
 from app.services.account import AccountService
 from app.services.admin import AdminService
+from app.services.billing import BillingService
 from app.services.budget import BudgetService
 from app.services.conversation import ConversationService
 from app.services.entitlements import EntitlementService
@@ -35,6 +36,10 @@ async def get_transcription_service(request: Request) -> TranscriptionService:
 
 async def get_entitlement_service(request: Request) -> EntitlementService:
     return cast(EntitlementService, request.app.state.entitlement_service)
+
+
+async def get_billing_service(request: Request) -> BillingService:
+    return cast(BillingService, request.app.state.billing_service)
 
 
 async def get_admin_service(request: Request) -> AdminService:
@@ -67,4 +72,5 @@ ConversationDependency = Annotated[ConversationService, Depends(get_conversation
 TranscriptionDependency = Annotated[TranscriptionService, Depends(get_transcription_service)]
 EntitlementDependency = Annotated[EntitlementService, Depends(get_entitlement_service)]
 AdminDependency = Annotated[AdminService, Depends(get_admin_service)]
+BillingDependency = Annotated[BillingService, Depends(get_billing_service)]
 AdminUserDependency = Annotated[AuthenticatedUser, Depends(get_admin_user)]

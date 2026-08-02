@@ -1264,9 +1264,6 @@ function Profile({
                     {cancelingSubscription ? "Cancelando..." : "Cancelar assinatura"}
                   </Button>
                 )}
-                <a href="https://www.mercadopago.com.br/subscriptions" target="_blank" rel="noreferrer">
-                  Abrir no Mercado Pago
-                </a>
                 <p className="usage-note">O acesso continua até o fim do período pago.</p>
               </div>
             )}

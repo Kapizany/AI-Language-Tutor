@@ -379,7 +379,9 @@ export function AdminPanel({ session, go }: AdminPanelProps) {
                   <li>
                     <span>Origem</span>
                     <strong>
-                      {selectedUser.subscription_source === "mercadopago"
+                      {selectedUser.subscription_source === "asaas"
+                        ? "Asaas"
+                        : selectedUser.subscription_source === "mercadopago"
                         ? "Mercado Pago"
                         : selectedUser.subscription_source === "admin"
                           ? "Administrador"

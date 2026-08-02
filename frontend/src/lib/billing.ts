@@ -1,22 +1,33 @@
 import { apiRequest } from "@/lib/api-client";
 
 export type BillingCycle = "monthly" | "annual";
+export type PaymentMethod = "card" | "pix_automatic";
 
-export type CheckoutSession = {
-  checkout_url: string;
+export type CheckoutSubscribePayload = {
+  billing_cycle: BillingCycle;
+  payment_method: PaymentMethod;
+  cpf: string;
+  card_holder_name?: string;
+  card_number?: string;
+  card_expiry_month?: string;
+  card_expiry_year?: string;
+  card_cvv?: string;
+  holder_postal_code?: string;
+  holder_address_number?: string;
+  holder_phone?: string;
+};
+
+export type CheckoutSubscribeResponse = {
+  status: "pending" | "confirmed";
+  payment_method: PaymentMethod;
   external_subscription_id: string;
   amount: number;
   currency: string;
   billing_cycle: BillingCycle;
-  reason: string;
+  message: string;
+  pix_qr_code?: string | null;
+  pix_copy_paste?: string | null;
   mock_checkout: boolean;
-};
-
-export type SubscribeResponse = {
-  plan_id: string;
-  subscription_status: string;
-  external_subscription_id: string;
-  billing_cycle: BillingCycle;
 };
 
 export type BillingSubscription = {
@@ -27,33 +38,19 @@ export type BillingSubscription = {
   subscription_renews_at: string | null;
   billing_cycle: BillingCycle | null;
   subscription_source: string;
+  payment_method: string | null;
   can_manage_billing: boolean;
   manage_url: string | null;
 };
 
-export async function createCheckoutSession(
+export async function subscribeCheckout(
   accessToken: string,
-  billingCycle: BillingCycle,
+  payload: CheckoutSubscribePayload,
 ) {
-  return apiRequest<CheckoutSession>("/api/v1/billing/checkout/session", {
+  return apiRequest<CheckoutSubscribeResponse>("/api/v1/billing/checkout/subscribe", {
     accessToken,
     method: "POST",
-    body: { billing_cycle: billingCycle },
-  });
-}
-
-export async function subscribeWithCardToken(
-  accessToken: string,
-  billingCycle: BillingCycle,
-  cardTokenId: string,
-) {
-  return apiRequest<SubscribeResponse>("/api/v1/billing/subscribe", {
-    accessToken,
-    method: "POST",
-    body: {
-      billing_cycle: billingCycle,
-      card_token_id: cardTokenId,
-    },
+    body: payload,
   });
 }
 

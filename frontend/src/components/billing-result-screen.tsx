@@ -130,13 +130,13 @@ export function BillingResultScreen({ session, variant, go }: BillingResultScree
               <>
                 <li>Abra Plano e metas para ver seu uso diário.</li>
                 <li>Escolha um cenário e pratique com mais conversas e voz.</li>
-                <li>Cancele quando quiser no Mercado Pago — o acesso continua até o fim do ciclo.</li>
+                <li>Cancele quando quiser no perfil — o acesso continua até o fim do ciclo.</li>
               </>
             ) : (
               <>
                 <li>Compare Free e Premium na página de planos.</li>
-                <li>Escolha mensal ou anual — ambos estão temporariamente por R$ 5,00.</li>
-                <li>Finalize no Mercado Pago com pagamento seguro.</li>
+                <li>Escolha mensal ou anual e pague com cartão ou PIX.</li>
+                <li>O Premium é liberado após a confirmação do pagamento.</li>
               </>
             )}
           </ol>

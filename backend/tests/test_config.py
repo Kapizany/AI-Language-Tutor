@@ -41,9 +41,25 @@ def test_disabled_billing_does_not_block_production_startup() -> None:
         supabase_service_role_key="service-role",
         gemini_api_key="gemini",
         deepseek_api_key="deepseek",
+        asaas_billing_enabled=False,
         mercadopago_billing_enabled=False,
     )
-    assert not settings.mercadopago_billing_enabled
+    assert not settings.asaas_billing_enabled
+
+
+def test_enabled_asaas_billing_requires_secrets() -> None:
+    with pytest.raises(ValidationError, match="ASAAS_WEBHOOK_ACCESS_TOKEN"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+            gemini_api_key="gemini",
+            deepseek_api_key="deepseek",
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            asaas_webhook_access_token="",
+        )
 
 
 def test_enabled_billing_requires_mercadopago_secrets() -> None:

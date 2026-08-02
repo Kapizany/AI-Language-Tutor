@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Any, NoReturn
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.api.dependencies import BillingDependency, EntitlementDependency
 from app.core.security import get_current_user
@@ -10,27 +10,32 @@ from app.schemas.billing import (
     BillingRefreshResponse,
     BillingSubscriptionView,
     CancelSubscriptionResponse,
-    CheckoutSessionRequest,
-    CheckoutSessionResponse,
-    SubscribeRequest,
-    SubscribeResponse,
+    CheckoutSubscribeRequest,
+    CheckoutSubscribeResponse,
 )
 from app.services.billing import (
     AlreadyPremiumError,
-    BillingCredentialMismatchError,
     BillingNotConfiguredError,
     BillingProviderError,
     BillingRateLimitError,
-    BillingSellerIsBuyerError,
     BillingServiceError,
     BillingSubscriptionNotCancelableError,
     BillingSubscriptionNotFoundError,
-    parse_mercadopago_webhook_payload,
+    BillingValidationError,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    if request.client:
+        return request.client.host
+    return "127.0.0.1"
 
 
 def _raise_billing_http_error(
@@ -41,64 +46,20 @@ def _raise_billing_http_error(
     unavailable_detail: str,
     failure_detail: str,
 ) -> NoReturn:
-    if isinstance(exc, BillingCredentialMismatchError):
-        logger.warning(
-            "Billing credentials or card token are not from the same Mercado Pago application",
-            extra={
-                "operation": operation,
-                "provider": "mercadopago",
-                "billing_cycle": billing_cycle,
-                "reason": "credential_mismatch",
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Credenciais do Mercado Pago inconsistentes: a public key e o "
-                "access token precisam pertencer à mesma aplicação e ao mesmo ambiente."
-            ),
-        ) from exc
     if isinstance(exc, BillingNotConfiguredError):
-        logger.warning(
-            "Billing unavailable because it is not configured",
-            extra={
-                "operation": operation,
-                "provider": "mercadopago",
-                "billing_cycle": billing_cycle,
-                "reason": "billing_not_configured",
-            },
-        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=unavailable_detail,
         ) from exc
+    if isinstance(exc, BillingValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     if isinstance(exc, AlreadyPremiumError):
-        logger.info(
-            "Billing rejected for an existing Premium subscription",
-            extra={
-                "operation": operation,
-                "provider": "mercadopago",
-                "billing_cycle": billing_cycle,
-                "reason": "already_premium",
-            },
-        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Você já possui uma assinatura Premium ativa.",
-        ) from exc
-    if isinstance(exc, BillingSellerIsBuyerError):
-        logger.info(
-            "Billing rejected because payer email matches Mercado Pago seller",
-            extra={
-                "operation": operation,
-                "provider": "mercadopago",
-                "billing_cycle": billing_cycle,
-                "reason": "seller_is_buyer",
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
         ) from exc
     if isinstance(exc, BillingSubscriptionNotFoundError):
         raise HTTPException(
@@ -111,82 +72,25 @@ def _raise_billing_http_error(
             detail="Esta assinatura não pode ser cancelada por este usuário.",
         ) from exc
     if isinstance(exc, BillingRateLimitError):
-        logger.warning(
-            "Billing rate limited",
-            extra={
-                "operation": operation,
-                "provider": "supabase",
-                "billing_cycle": billing_cycle,
-                "reason": "rate_limit",
-            },
-        )
-        detail = "Muitas tentativas de checkout. Aguarde alguns minutos."
-        if exc.retry_after_seconds:
-            if exc.retry_after_seconds >= 60:
-                minutes = max(1, round(exc.retry_after_seconds / 60))
-                detail = (
-                    f"Muitas tentativas de checkout. Tente novamente em cerca de {minutes} min."
-                )
-            else:
-                detail = (
-                    f"Muitas tentativas de checkout. Tente novamente em "
-                    f"{exc.retry_after_seconds} segundos."
-                )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=detail,
-        ) from exc
+        detail = "Muitas tentativas. Aguarde alguns minutos."
+        if exc.retry_after_seconds and exc.retry_after_seconds >= 60:
+            minutes = max(1, round(exc.retry_after_seconds / 60))
+            detail = f"Muitas tentativas. Tente novamente em cerca de {minutes} min."
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail) from exc
     if isinstance(exc, BillingProviderError):
-        logger.error(
-            "Mercado Pago provider operation failed",
-            extra={
-                "operation": operation,
-                "provider": "mercadopago",
-                "billing_cycle": billing_cycle,
-                "http_status": exc.status_code,
-                "upstream_request_id": exc.request_id,
-            },
-        )
-        if operation == "subscribe_card_token" and exc.status_code == 500:
-            detail = (
-                "O Mercado Pago recusou criar a assinatura (erro interno). "
-                "Verifique se a public key e o access token são da mesma aplicação "
-                "do Mercado Pago com Assinaturas habilitadas, se o e-mail informado "
-                "no checkout corresponde à conta Mercado Pago do titular do cartão, "
-                "e se o cartão não pertence à conta vendedora."
-            )
-        else:
-            detail = (
-                "O Mercado Pago não conseguiu processar a assinatura agora. "
-                "Tente novamente em alguns minutos."
-            )
-        if exc.request_id:
-            detail += f" Código de suporte: {exc.request_id}."
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=detail,
-        ) from exc
+        detail = "Não foi possível processar o pagamento agora. Tente novamente em alguns minutos."
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
     if isinstance(exc, BillingServiceError):
         logger.exception(
             "Billing operation failed",
             extra={
                 "operation": operation,
-                "provider": "mercadopago",
+                "provider": "asaas",
                 "billing_cycle": billing_cycle,
                 "error_type": type(exc).__name__,
             },
         )
-        detail = failure_detail
-        if str(exc).startswith("Mercado Pago rejected the payer/collector"):
-            detail = (
-                "O Mercado Pago recusou autorizar a assinatura. "
-                "Use um e-mail de comprador diferente da conta vendedora do Mercado Pago "
-                "e um cartão de crédito válido."
-            )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=detail,
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=failure_detail) from exc
     logger.exception(
         "Billing failed unexpectedly",
         extra={
@@ -195,58 +99,43 @@ def _raise_billing_http_error(
             "error_type": type(exc).__name__,
         },
     )
-    raise HTTPException(
-        status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=failure_detail,
-    ) from exc
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=failure_detail) from exc
 
 
-@router.post("/checkout/session", response_model=CheckoutSessionResponse)
-async def create_checkout_session(
-    payload: CheckoutSessionRequest,
+@router.post("/checkout/subscribe", response_model=CheckoutSubscribeResponse)
+async def subscribe_checkout(
+    payload: CheckoutSubscribeRequest,
+    request: Request,
     billing: BillingDependency,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-) -> CheckoutSessionResponse:
+) -> CheckoutSubscribeResponse:
     try:
-        result = await billing.create_checkout_session(
+        result = await billing.create_subscription_checkout(
             user_id=user.id,
             user_email=user.email,
+            display_name=None,
             billing_cycle=payload.billing_cycle,
+            payment_method=payload.payment_method,
+            cpf=payload.cpf,
+            remote_ip=_client_ip(request),
+            card_holder_name=payload.card_holder_name,
+            card_number=payload.card_number,
+            card_expiry_month=payload.card_expiry_month,
+            card_expiry_year=payload.card_expiry_year,
+            card_cvv=payload.card_cvv,
+            holder_postal_code=payload.holder_postal_code,
+            holder_address_number=payload.holder_address_number,
+            holder_phone=payload.holder_phone,
         )
     except Exception as exc:
         _raise_billing_http_error(
             exc=exc,
-            operation="checkout_session",
+            operation="checkout_subscribe",
             billing_cycle=payload.billing_cycle,
             unavailable_detail="Pagamentos ainda não estão disponíveis.",
-            failure_detail="Não foi possível preparar o checkout agora.",
+            failure_detail="Não foi possível iniciar a assinatura agora.",
         )
-    return CheckoutSessionResponse.model_validate(result)
-
-
-@router.post("/subscribe", response_model=SubscribeResponse)
-async def subscribe_with_card_token(
-    payload: SubscribeRequest,
-    billing: BillingDependency,
-    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-) -> SubscribeResponse:
-    try:
-        result = await billing.create_subscription_with_card_token(
-            user_id=user.id,
-            user_email=user.email,
-            billing_cycle=payload.billing_cycle,
-            card_token_id=payload.card_token_id,
-            brick_payer_email=payload.payer_email,
-        )
-    except Exception as exc:
-        _raise_billing_http_error(
-            exc=exc,
-            operation="subscribe_card_token",
-            billing_cycle=payload.billing_cycle,
-            unavailable_detail="Pagamentos ainda não estão disponíveis.",
-            failure_detail="Não foi possível concluir a assinatura agora.",
-        )
-    return SubscribeResponse.model_validate(result)
+    return CheckoutSubscribeResponse.model_validate(result)
 
 
 @router.post("/subscription/cancel", response_model=CancelSubscriptionResponse)
@@ -285,6 +174,7 @@ async def subscription_status(
         subscription_renews_at=summary.get("subscription_renews_at"),
         billing_cycle=summary.get("billing_cycle"),
         subscription_source=str(summary.get("subscription_source") or "system"),
+        payment_method=summary.get("payment_method"),
         can_manage_billing=can_manage,
         manage_url=billing.manage_url if can_manage else None,
     )
@@ -321,52 +211,29 @@ async def refresh_subscription(
 
 
 @router.post("/webhook")
-async def mercadopago_webhook(
+async def asaas_webhook(
     request: Request,
     billing: BillingDependency,
-    topic: str | None = Query(default=None),
-    id: str | None = Query(default=None, alias="id"),
-    data_id: str | None = Query(default=None, alias="data.id"),
-    x_signature: str | None = Header(default=None),
-    x_request_id: str | None = Header(default=None),
+    asaas_access_token: str | None = Header(default=None, alias="asaas-access-token"),
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {}
     try:
-        parsed = await request.json()
-        if isinstance(parsed, dict):
-            body = parsed
+        body = await request.json()
     except Exception:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
 
-    resource_id, resolved_topic, payload = parse_mercadopago_webhook_payload(
-        body,
-        query_resource_id=id or data_id,
-        query_topic=topic,
-    )
-
-    if not billing.verify_webhook_signature(
-        resource_id=resource_id,
-        request_id=x_request_id,
-        signature=x_signature,
-    ):
+    if not billing.verify_webhook_token(asaas_access_token):
         logger.warning(
-            "Mercado Pago webhook signature rejected",
-            extra={
-                "operation": "webhook_verify",
-                "provider": "mercadopago",
-                "reason": "invalid_signature",
-            },
+            "Asaas webhook token rejected",
+            extra={"operation": "webhook_verify", "provider": "asaas", "reason": "invalid_token"},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid webhook signature.",
+            detail="Invalid webhook token.",
         )
 
-    return await billing.handle_notification(
-        resource_id=resource_id,
-        topic=resolved_topic,
-        payload=payload,
-    )
+    return await billing.handle_webhook(body)
 
 
 @router.get("/plans")
@@ -376,28 +243,12 @@ async def billing_plans() -> dict[str, Any]:
     return {
         "currency": "BRL",
         "plans": {
-            "monthly": {
-                "amount": PRICING["monthly"]["amount"],
-                "label": "Mensal",
-            },
+            "monthly": {"amount": PRICING["monthly"]["amount"], "label": "Mensal"},
             "annual": {
                 "amount": PRICING["annual"]["amount"],
                 "label": "Anual",
-                "savings_label": "Preço temporário de teste",
+                "savings_label": "Economize 2 meses",
             },
         },
-        "comparison": {
-            "free": {
-                "conversation_sessions": 2,
-                "llm_requests": 40,
-                "transcriptions": 10,
-                "messages_per_session": 30,
-            },
-            "premium": {
-                "conversation_sessions": 20,
-                "llm_requests": 500,
-                "transcriptions": 100,
-                "messages_per_session": 60,
-            },
-        },
+        "payment_methods": ["card", "pix_automatic"],
     }

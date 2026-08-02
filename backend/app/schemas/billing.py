@@ -4,33 +4,34 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 BillingCycle = Literal["monthly", "annual"]
+PaymentMethod = Literal["card", "pix_automatic"]
 
 
-class CheckoutSessionRequest(BaseModel):
+class CheckoutSubscribeRequest(BaseModel):
     billing_cycle: BillingCycle
+    payment_method: PaymentMethod
+    cpf: str = Field(min_length=11, max_length=14)
+    card_holder_name: str | None = Field(default=None, max_length=120)
+    card_number: str | None = Field(default=None, max_length=19)
+    card_expiry_month: str | None = Field(default=None, max_length=2)
+    card_expiry_year: str | None = Field(default=None, max_length=4)
+    card_cvv: str | None = Field(default=None, max_length=4)
+    holder_postal_code: str | None = Field(default=None, max_length=9)
+    holder_address_number: str | None = Field(default=None, max_length=20)
+    holder_phone: str | None = Field(default=None, max_length=20)
 
 
-class CheckoutSessionResponse(BaseModel):
-    checkout_url: str
+class CheckoutSubscribeResponse(BaseModel):
+    status: Literal["pending", "confirmed"]
+    payment_method: PaymentMethod
     external_subscription_id: str
     amount: float
     currency: str = "BRL"
     billing_cycle: BillingCycle
-    reason: str
+    message: str
+    pix_qr_code: str | None = None
+    pix_copy_paste: str | None = None
     mock_checkout: bool = False
-
-
-class SubscribeRequest(BaseModel):
-    billing_cycle: BillingCycle
-    card_token_id: str = Field(min_length=8, max_length=200)
-    payer_email: str | None = Field(default=None, max_length=320)
-
-
-class SubscribeResponse(BaseModel):
-    plan_id: str
-    subscription_status: str
-    external_subscription_id: str
-    billing_cycle: BillingCycle
 
 
 class CancelSubscriptionResponse(BaseModel):
@@ -47,6 +48,7 @@ class BillingSubscriptionView(BaseModel):
     subscription_renews_at: datetime | None = None
     billing_cycle: str | None = None
     subscription_source: str = "system"
+    payment_method: str | None = None
     can_manage_billing: bool = False
     manage_url: str | None = None
 

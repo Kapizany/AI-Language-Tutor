@@ -1,13 +1,16 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Check,
+  Copy,
   Crown,
+  CreditCard,
   Lock,
   MessageCircle,
   Mic,
+  QrCode,
   ShieldCheck,
   Sparkles,
   Zap,
@@ -17,15 +20,18 @@ import { AppHeader } from "@/components/app-header";
 import { PlanComparison } from "@/components/plan-comparison";
 import { Button } from "@/components/ui";
 import {
-  createCheckoutSession,
-  subscribeWithCardToken,
+  refreshBillingSubscription,
+  subscribeCheckout,
   type BillingCycle,
+  type CheckoutSubscribeResponse,
+  type PaymentMethod,
 } from "@/lib/billing";
 import { ApiClientError } from "@/lib/api-client";
 import type { ScreenId } from "@/lib/learner";
 import {
   CHECKOUT_TRUST_ITEMS,
   formatBrl,
+  formatCpf,
   PLAN_COMPARISON,
   PREMIUM_PRICING,
   PREMIUM_VALUE_PROPS,
@@ -53,6 +59,8 @@ const PREMIUM_HIGHLIGHTS = [
   "Correções e tutor com muito mais folga",
 ] as const;
 
+type CheckoutStep = "form" | "pending";
+
 export function PricingScreen({
   session,
   displayName,
@@ -60,11 +68,34 @@ export function PricingScreen({
   onSubscribed,
 }: PricingScreenProps) {
   const [cycle, setCycle] = useState<BillingCycle>("annual");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("card");
+  const [step, setStep] = useState<CheckoutStep>("form");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [checkoutResult, setCheckoutResult] = useState<CheckoutSubscribeResponse | null>(null);
+  const [cpf, setCpf] = useState("");
+  const [cardHolderName, setCardHolderName] = useState("");
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiryMonth, setCardExpiryMonth] = useState("");
+  const [cardExpiryYear, setCardExpiryYear] = useState("");
+  const [cardCvv, setCardCvv] = useState("");
+  const [holderPostalCode, setHolderPostalCode] = useState("");
+  const [holderAddressNumber, setHolderAddressNumber] = useState("");
+  const [holderPhone, setHolderPhone] = useState("");
+  const [copiedPix, setCopiedPix] = useState(false);
   const checkoutInFlight = useRef(false);
+  const pollRef = useRef<number | null>(null);
 
   const selectedPricing = PREMIUM_PRICING[cycle];
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+      }
+    };
+  }, []);
 
   const finishSubscription = async () => {
     if (session?.access_token && onSubscribed) {
@@ -73,7 +104,29 @@ export function PricingScreen({
     go("billing-success");
   };
 
-  const startCheckout = async () => {
+  const startPolling = () => {
+    if (!session?.access_token || pollRef.current) {
+      return;
+    }
+    pollRef.current = window.setInterval(() => {
+      void (async () => {
+        try {
+          const result = await refreshBillingSubscription(session.access_token!);
+          if (result.plan_id === "premium" || result.subscription_status === "active") {
+            if (pollRef.current) {
+              window.clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+            await finishSubscription();
+          }
+        } catch {
+          // Keep polling until timeout or success.
+        }
+      })();
+    }, 4000);
+  };
+
+  const submitCheckout = async () => {
     if (!session?.access_token) {
       go("login");
       return;
@@ -81,21 +134,49 @@ export function PricingScreen({
     if (checkoutInFlight.current || loading) {
       return;
     }
+    const cpfDigits = cpf.replace(/\D/g, "");
+    if (cpfDigits.length !== 11) {
+      setError("Informe um CPF válido com 11 dígitos.");
+      return;
+    }
+    if (paymentMethod === "card") {
+      if (!cardHolderName.trim() || !cardNumber.trim() || !cardExpiryMonth || !cardExpiryYear || !cardCvv) {
+        setError("Preencha todos os dados do cartão.");
+        return;
+      }
+    }
+
     checkoutInFlight.current = true;
     setLoading(true);
     setError("");
+    setStatusMessage("");
     try {
-      const checkout = await createCheckoutSession(session.access_token, cycle);
-      if (checkout.mock_checkout) {
-        await subscribeWithCardToken(
-          session.access_token,
-          cycle,
-          "mock-card-token-local",
-        );
-        await finishSubscription();
-        return;
+      const result = await subscribeCheckout(session.access_token, {
+        billing_cycle: cycle,
+        payment_method: paymentMethod,
+        cpf: cpfDigits,
+        card_holder_name: paymentMethod === "card" ? cardHolderName.trim() : undefined,
+        card_number: paymentMethod === "card" ? cardNumber.replace(/\D/g, "") : undefined,
+        card_expiry_month: paymentMethod === "card" ? cardExpiryMonth : undefined,
+        card_expiry_year: paymentMethod === "card" ? cardExpiryYear : undefined,
+        card_cvv: paymentMethod === "card" ? cardCvv : undefined,
+        holder_postal_code: paymentMethod === "card" ? holderPostalCode.replace(/\D/g, "") : undefined,
+        holder_address_number: paymentMethod === "card" ? holderAddressNumber : undefined,
+        holder_phone: paymentMethod === "card" ? holderPhone.replace(/\D/g, "") : undefined,
+      });
+      setCheckoutResult(result);
+      setStep("pending");
+      setStatusMessage(result.message);
+
+      if (result.mock_checkout) {
+        const refresh = await refreshBillingSubscription(session.access_token);
+        if (refresh.plan_id === "premium" || refresh.subscription_status === "active") {
+          await finishSubscription();
+          return;
+        }
       }
-      window.location.href = checkout.checkout_url;
+
+      startPolling();
     } catch (caught) {
       checkoutInFlight.current = false;
       setError(
@@ -103,7 +184,19 @@ export function PricingScreen({
           ? caught.message
           : "Não foi possível iniciar o checkout agora.",
       );
+    } finally {
       setLoading(false);
+    }
+  };
+
+  const copyPixCode = async () => {
+    if (!checkoutResult?.pix_copy_paste) return;
+    try {
+      await navigator.clipboard.writeText(checkoutResult.pix_copy_paste);
+      setCopiedPix(true);
+      window.setTimeout(() => setCopiedPix(false), 2000);
+    } catch {
+      setError("Não foi possível copiar o código PIX.");
     }
   };
 
@@ -184,17 +277,11 @@ export function PricingScreen({
               Premium
             </span>
             <div className="pricing-plan-price-block">
-              <span className="pricing-plan-list-price">
-                De {formatBrl(selectedPricing.listAmount)}
-              </span>
               <strong className="pricing-plan-price">
                 {formatBrl(selectedPricing.amount)}
               </strong>
               <span className="pricing-plan-cycle">{selectedPricing.suffix}</span>
             </div>
-            <small className="pricing-plan-discount-line">
-              Preço temporário para validar a cobrança real
-            </small>
             <small className="pricing-plan-equivalent">{selectedPricing.billingNote}</small>
           </header>
 
@@ -207,22 +294,175 @@ export function PricingScreen({
             ))}
           </ul>
 
-          <section className="pricing-checkout-panel" aria-label="Resumo do checkout">
-            <div className="pricing-checkout-summary">
-              <span>Você assina</span>
-              <strong>
-                Premium {cycle === "annual" ? "anual" : "mensal"} · {formatBrl(selectedPricing.amount)}
-              </strong>
-              <small>
-                Cobrança real de {formatBrl(selectedPricing.amount)}. Renovação automática até
-                cancelar. Você conclui o pagamento no checkout seguro do Mercado Pago — não
-                precisa ter conta MP antes; pode criar ou entrar na hora.
-              </small>
-            </div>
+          <section className="pricing-checkout-panel" aria-label="Checkout Premium">
+            {step === "form" ? (
+              <>
+                <div className="pricing-checkout-summary">
+                  <span>Você assina</span>
+                  <strong>
+                    Premium {cycle === "annual" ? "anual" : "mensal"} · {formatBrl(selectedPricing.amount)}
+                  </strong>
+                  <small>
+                    Premium liberado somente após confirmação do pagamento. Você receberá um e-mail
+                    quando estiver ativo.
+                  </small>
+                </div>
 
-            <Button full onClick={() => void startCheckout()} disabled={loading}>
-              {loading ? "Redirecionando..." : "Assinar no Mercado Pago"}
-            </Button>
+                <div className="pricing-payment-toggle" role="tablist" aria-label="Forma de pagamento">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={paymentMethod === "card"}
+                    className={paymentMethod === "card" ? "active" : ""}
+                    onClick={() => setPaymentMethod("card")}
+                  >
+                    <CreditCard size={15} aria-hidden="true" />
+                    Cartão
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={paymentMethod === "pix_automatic"}
+                    className={paymentMethod === "pix_automatic" ? "active" : ""}
+                    onClick={() => setPaymentMethod("pix_automatic")}
+                  >
+                    <QrCode size={15} aria-hidden="true" />
+                    PIX
+                  </button>
+                </div>
+
+                <div className="form-grid pricing-checkout-form">
+                  <label>
+                    CPF
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="000.000.000-00"
+                      value={cpf}
+                      onChange={(event) => setCpf(formatCpf(event.target.value))}
+                    />
+                  </label>
+
+                  {paymentMethod === "card" && (
+                    <>
+                      <label>
+                        Nome no cartão
+                        <input
+                          type="text"
+                          autoComplete="cc-name"
+                          value={cardHolderName}
+                          onChange={(event) => setCardHolderName(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Número do cartão
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="cc-number"
+                          value={cardNumber}
+                          onChange={(event) => setCardNumber(event.target.value.replace(/\D/g, "").slice(0, 16))}
+                        />
+                      </label>
+                      <label>
+                        Validade (MM)
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="cc-exp-month"
+                          placeholder="MM"
+                          value={cardExpiryMonth}
+                          onChange={(event) => setCardExpiryMonth(event.target.value.replace(/\D/g, "").slice(0, 2))}
+                        />
+                      </label>
+                      <label>
+                        Validade (AAAA)
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="cc-exp-year"
+                          placeholder="AAAA"
+                          value={cardExpiryYear}
+                          onChange={(event) => setCardExpiryYear(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                        />
+                      </label>
+                      <label>
+                        CVV
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          autoComplete="cc-csc"
+                          value={cardCvv}
+                          onChange={(event) => setCardCvv(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                        />
+                      </label>
+                      <label>
+                        CEP
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={holderPostalCode}
+                          onChange={(event) => setHolderPostalCode(event.target.value.replace(/\D/g, "").slice(0, 8))}
+                        />
+                      </label>
+                      <label>
+                        Número do endereço
+                        <input
+                          type="text"
+                          value={holderAddressNumber}
+                          onChange={(event) => setHolderAddressNumber(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Telefone (opcional)
+                        <input
+                          type="tel"
+                          inputMode="tel"
+                          value={holderPhone}
+                          onChange={(event) => setHolderPhone(event.target.value.replace(/\D/g, "").slice(0, 11))}
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+
+                <Button full onClick={() => void submitCheckout()} disabled={loading}>
+                  {loading
+                    ? "Processando..."
+                    : paymentMethod === "card"
+                      ? "Assinar com cartão"
+                      : "Gerar PIX"}
+                </Button>
+              </>
+            ) : (
+              <div className="pricing-pending-panel">
+                <p className="pricing-brick-status">{statusMessage}</p>
+                {checkoutResult?.payment_method === "pix_automatic" && checkoutResult.pix_qr_code && (
+                  <div className="pricing-pix-panel">
+                    <img
+                      src={`data:image/png;base64,${checkoutResult.pix_qr_code}`}
+                      alt="QR Code PIX para pagamento"
+                      className="pricing-pix-qr"
+                    />
+                    {checkoutResult.pix_copy_paste && (
+                      <Button variant="secondary" full onClick={() => void copyPixCode()}>
+                        <Copy size={15} aria-hidden="true" />
+                        {copiedPix ? "Código copiado" : "Copiar código PIX"}
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {checkoutResult?.payment_method === "card" && (
+                  <p className="pricing-pending-note">
+                    Aguardando confirmação do pagamento no cartão. Isso pode levar alguns instantes.
+                  </p>
+                )}
+                <Button variant="secondary" full onClick={() => go("profile")}>
+                  Ver status no perfil
+                </Button>
+              </div>
+            )}
 
             <ul className="pricing-trust-row">
               {CHECKOUT_TRUST_ITEMS.map((item) => (

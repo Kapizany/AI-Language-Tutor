@@ -83,6 +83,15 @@ class Settings(BaseSettings):
     mercadopago_back_url: str = "http://localhost:3000/"
     mercadopago_manage_url: str = "https://www.mercadopago.com.br/subscriptions"
 
+    asaas_billing_enabled: bool = False
+    asaas_api_key: str = ""
+    asaas_webhook_access_token: str = ""
+    asaas_environment: str = "sandbox"
+    asaas_mock_checkout: bool = False
+    billing_site_url: str = "http://localhost:3000/"
+    resend_api_key: str = ""
+    billing_email_from: str = "Lume Tutor <noreply@caps-labs.com>"
+
     @field_validator(
         "app_allowed_origins",
         "llm_fallback_providers",
@@ -110,6 +119,13 @@ class Settings(BaseSettings):
                 "GEMINI_API_KEY": self.gemini_api_key,
                 "DEEPSEEK_API_KEY": self.deepseek_api_key,
             }
+            if self.asaas_billing_enabled:
+                required.update(
+                    {
+                        "ASAAS_API_KEY": self.asaas_api_key,
+                        "ASAAS_WEBHOOK_ACCESS_TOKEN": self.asaas_webhook_access_token,
+                    }
+                )
             if self.mercadopago_billing_enabled:
                 required.update(
                     {

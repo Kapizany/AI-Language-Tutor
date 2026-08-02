@@ -1,18 +1,16 @@
 export const PREMIUM_PRICING = {
   monthly: {
-    amount: 5,
-    listAmount: 19.9,
+    amount: 19.9,
     label: "Mensal",
     suffix: "/mês",
-    billingNote: "Cobrança mensal recorrente — preço temporário de teste",
+    billingNote: "Cobrança mensal recorrente no cartão ou PIX",
   },
   annual: {
-    amount: 5,
-    listAmount: 179.1,
+    amount: 179.1,
     label: "Anual",
     suffix: "/ano",
-    savingsLabel: "R$ 5 para teste",
-    billingNote: "Cobrança anual recorrente — preço temporário de teste",
+    savingsLabel: "Economize 2 meses",
+    billingNote: "Cobrança anual recorrente no cartão ou PIX",
   },
 } as const;
 
@@ -140,29 +138,29 @@ export const PRICING_FAQ = [
   {
     question: "Posso cancelar quando quiser?",
     answer:
-      "Sim. Cancele no Mercado Pago a qualquer momento. Seu Premium continua ativo até o fim do período já pago.",
+      "Sim. Cancele no perfil a qualquer momento. Seu Premium continua ativo até o fim do período já pago.",
   },
   {
     question: "Qual a diferença entre mensal e anual?",
     answer:
-      "Durante a validação da cobrança real, mensal e anual custam temporariamente R$ 5,00. O mensal renova todo mês; o anual, uma vez por ano.",
+      "O mensal custa R$ 19,90 por mês. O anual custa R$ 179,10 por ano — equivalente a 2 meses grátis.",
   },
   {
     question: "O pagamento é seguro?",
     answer:
-      "Sim. O checkout é processado pelo Mercado Pago. O Lume não armazena dados do seu cartão.",
+      "Sim. Cartão e PIX são processados pelo Asaas. O Lume não armazena dados do seu cartão.",
   },
   {
     question: "Quando o Premium é liberado?",
     answer:
-      "Assim que o pagamento for confirmado. Se demorar alguns segundos, abra Plano e metas no perfil ou aguarde a confirmação automática.",
+      "Somente após a confirmação do pagamento. Você receberá um e-mail quando o Premium for ativado.",
   },
 ] as const;
 
 export const CHECKOUT_TRUST_ITEMS = [
-  "Pagamento via Mercado Pago",
+  "Pagamento seguro via Asaas",
   "Cancele quando quiser",
-  "Acesso até o fim do ciclo pago",
+  "Premium só após confirmação",
 ] as const;
 
 export const UPGRADE_HIGHLIGHTS = [
@@ -196,4 +194,14 @@ export function usagePercent(used: number, limit: number) {
 export function isNearLimit(used: number, limit: number, threshold = 0.8) {
   if (!limit) return false;
   return used / limit >= threshold;
+}
+
+export function formatCpf(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  }
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
 }

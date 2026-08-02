@@ -1,6 +1,6 @@
 # ADR 0011 — Monetização Premium com Mercado Pago
 
-Status: aceito.
+Status: substituído por [ADR 0012](./0012-premium-billing-asaas.md).
 
 ## Decisão
 

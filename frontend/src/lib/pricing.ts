@@ -1,15 +1,15 @@
 export const PREMIUM_PRICING = {
   monthly: {
-    amount: 19.9,
+    amount: 2,
     label: "Mensal",
     suffix: "/mês",
     billingNote: "Cobrança mensal recorrente no cartão ou PIX",
   },
   annual: {
-    amount: 179.1,
+    amount: 2,
     label: "Anual",
     suffix: "/ano",
-    savingsLabel: "Economize 2 meses",
+    savingsLabel: "Teste",
     billingNote: "Cobrança anual recorrente no cartão ou PIX",
   },
 } as const;

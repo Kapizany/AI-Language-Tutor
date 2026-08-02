@@ -22,6 +22,7 @@ _SAFE_EXTRA_FIELDS = (
     "billing_enabled",
     "mock_checkout",
     "test_checkout",
+    "upstream_request_id",
 )
 
 # Nenhum log da aplicação deve carregar dado pessoal. O gateway já registra apenas

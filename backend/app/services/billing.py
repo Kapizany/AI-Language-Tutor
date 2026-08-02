@@ -19,13 +19,13 @@ MERCADOPAGO_TEST_PAYER_EMAIL = "test@testuser.com"
 
 PRICING: dict[BillingCycle, dict[str, Any]] = {
     "monthly": {
-        "amount": 19.90,
+        "amount": 1.00,
         "frequency": 1,
         "frequency_type": "months",
         "reason": "Lume Tutor Premium - Mensal",
     },
     "annual": {
-        "amount": 179.10,
+        "amount": 1.00,
         "frequency": 12,
         "frequency_type": "months",
         "reason": "Lume Tutor Premium - Anual",
@@ -177,6 +177,8 @@ class BillingService:
                 },
             )
             raise BillingServiceError(f"Billing RPC {name} failed: {response.text}")
+        if response.status_code == 204 or not response.content:
+            return None
         try:
             return response.json()
         except ValueError as exc:
@@ -313,6 +315,7 @@ class BillingService:
             raise BillingServiceError("Mercado Pago checkout transport failed") from exc
 
         if response.status_code >= 400:
+            upstream_request_id = response.headers.get("x-request-id")
             logger.warning(
                 "Mercado Pago preapproval rejected checkout status=%s body=%s",
                 response.status_code,
@@ -323,6 +326,7 @@ class BillingService:
                     "billing_cycle": billing_cycle,
                     "http_status": response.status_code,
                     "test_checkout": self.test_checkout,
+                    "upstream_request_id": upstream_request_id,
                 },
             )
             await self._release_checkout_attempt(user_id)

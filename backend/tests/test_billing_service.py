@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 
+import httpx
 import pytest
 
 from app.core.config import Settings
@@ -132,5 +133,26 @@ async def test_production_checkout_preserves_authenticated_user_email() -> None:
     try:
         assert service._checkout_payer_email("real-user@example.com") == "real-user@example.com"
         assert service._checkout_payer_email(None) is None
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_billing_rpc_accepts_no_content_response() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(lambda request: httpx.Response(204, request=request)),
+    )
+    try:
+        assert await service._rpc("release_billing_checkout_attempt", {}) is None
     finally:
         await service.close()

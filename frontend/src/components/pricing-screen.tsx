@@ -20,9 +20,6 @@ import { startCheckout, type BillingCycle } from "@/lib/billing";
 import { ApiClientError } from "@/lib/api-client";
 import type { ScreenId } from "@/lib/learner";
 import {
-  annualDiscountLine,
-  annualListPrice,
-  annualMonthlyEquivalent,
   CHECKOUT_TRUST_ITEMS,
   formatBrl,
   PLAN_COMPARISON,
@@ -57,7 +54,6 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
   const [error, setError] = useState("");
   const checkoutInFlight = useRef(false);
 
-  const monthlyEquivalent = annualMonthlyEquivalent();
   const selectedPricing = PREMIUM_PRICING[cycle];
 
   const subscribe = async () => {
@@ -156,35 +152,18 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
               Premium
             </span>
             <div className="pricing-plan-price-block">
-              {cycle === "annual" ? (
-                <>
-                  <span className="pricing-plan-list-price">
-                    De {formatBrl(annualListPrice())}
-                  </span>
-                  <strong className="pricing-plan-price">
-                    {formatBrl(selectedPricing.amount)}
-                  </strong>
-                </>
-              ) : (
-                <strong className="pricing-plan-price">
-                  {formatBrl(selectedPricing.amount)}
-                </strong>
-              )}
+              <span className="pricing-plan-list-price">
+                De {formatBrl(selectedPricing.listAmount)}
+              </span>
+              <strong className="pricing-plan-price">
+                {formatBrl(selectedPricing.amount)}
+              </strong>
               <span className="pricing-plan-cycle">{selectedPricing.suffix}</span>
             </div>
-            {cycle === "annual" && (
-              <>
-                <small className="pricing-plan-discount-line">
-                  Por {annualDiscountLine()} · {PREMIUM_PRICING.annual.savingsLabel}
-                </small>
-                <small className="pricing-plan-equivalent">
-                  Equivalente a {formatBrl(monthlyEquivalent)}/mês
-                </small>
-              </>
-            )}
-            {cycle === "monthly" && (
-              <small className="pricing-plan-equivalent">{selectedPricing.billingNote}</small>
-            )}
+            <small className="pricing-plan-discount-line">
+              Preço temporário para validar a cobrança real
+            </small>
+            <small className="pricing-plan-equivalent">{selectedPricing.billingNote}</small>
           </header>
 
           <ul className="pricing-plan-features">
@@ -203,9 +182,8 @@ export function PricingScreen({ session, displayName, go }: PricingScreenProps) 
                 Premium {cycle === "annual" ? "anual" : "mensal"} · {formatBrl(selectedPricing.amount)}
               </strong>
               <small>
-                {cycle === "annual"
-                  ? `${annualDiscountLine()} em vez de ${formatBrl(annualListPrice())} no mensal. Renovação automática até cancelar.`
-                  : `${selectedPricing.billingNote}. Renovação automática até cancelar.`}
+                Cobrança real de {formatBrl(selectedPricing.amount)}. Renovação automática até
+                cancelar.
               </small>
             </div>
             <Button full onClick={() => void subscribe()} disabled={loading}>

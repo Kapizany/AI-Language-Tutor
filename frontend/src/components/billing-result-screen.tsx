@@ -135,7 +135,7 @@ export function BillingResultScreen({ session, variant, go }: BillingResultScree
             ) : (
               <>
                 <li>Compare Free e Premium na página de planos.</li>
-                <li>Escolha mensal ou anual — anual equivale a 3 meses grátis (9 × R$ 19,90).</li>
+                <li>Escolha mensal ou anual — ambos estão temporariamente por R$ 1,00.</li>
                 <li>Finalize no Mercado Pago com pagamento seguro.</li>
               </>
             )}

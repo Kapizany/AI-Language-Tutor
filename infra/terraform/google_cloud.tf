@@ -37,10 +37,11 @@ locals {
     DEEPSEEK_OUTPUT_USD_PER_MILLION = "0.28"
     MERCADOPAGO_BILLING_ENABLED     = "true"
     MERCADOPAGO_MOCK_CHECKOUT       = "false"
-    MERCADOPAGO_TEST_CHECKOUT       = tostring(var.environment != "production")
-    MERCADOPAGO_NOTIFICATION_URL    = "${var.backend_public_url}/api/v1/billing/webhook"
-    MERCADOPAGO_BACK_URL            = "${var.site_url}/#/billing/success"
-    MERCADOPAGO_MANAGE_URL          = "https://www.mercadopago.com.br/subscriptions"
+    # Real-credential smoke tests require a real payer identity.
+    MERCADOPAGO_TEST_CHECKOUT    = "false"
+    MERCADOPAGO_NOTIFICATION_URL = "${var.backend_public_url}/api/v1/billing/webhook"
+    MERCADOPAGO_BACK_URL         = "${var.site_url}/#/billing/success"
+    MERCADOPAGO_MANAGE_URL       = "https://www.mercadopago.com.br/subscriptions"
   }
 }
 

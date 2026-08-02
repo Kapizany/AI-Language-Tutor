@@ -93,6 +93,8 @@ declare
   second_attempt jsonb;
   first_event jsonb;
   duplicate_event jsonb;
+  subscription_started_at timestamptz;
+  subscription_renews_at timestamptz;
 begin
   update public.user_subscriptions
   set plan_id = 'free', status = 'active', ends_at = null
@@ -110,18 +112,30 @@ begin
   end if;
 
   first_event := public.process_billing_event(
-    'mercadopago', 'test-event-1', '{"status":"authorized"}',
+    'mercadopago', 'test-event-1',
+    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}',
     '21000000-0000-0000-0000-000000000001',
     'mp-preapproval-event', 'mp-payer-1', 'authorized', 'monthly', null
   );
   duplicate_event := public.process_billing_event(
-    'mercadopago', 'test-event-1', '{"status":"authorized"}',
+    'mercadopago', 'test-event-1',
+    '{"status":"authorized","date_created":"2026-08-02T12:00:00Z","next_payment_date":"2026-09-02T12:00:00Z"}',
     '21000000-0000-0000-0000-000000000001',
     'mp-preapproval-event', 'mp-payer-1', 'authorized', 'monthly', null
   );
   if coalesce(first_event ->> 'updated', 'false') <> 'true'
      or coalesce(duplicate_event ->> 'reason', '') <> 'duplicate_event' then
     raise exception 'Billing failure: atomic idempotency failed';
+  end if;
+
+  select started_at, renews_at
+  into subscription_started_at, subscription_renews_at
+  from public.user_subscriptions
+  where user_id = '21000000-0000-0000-0000-000000000001';
+
+  if subscription_started_at <> '2026-08-02T12:00:00Z'::timestamptz
+     or subscription_renews_at <> '2026-09-02T12:00:00Z'::timestamptz then
+    raise exception 'Billing failure: subscription lifecycle dates were not persisted';
   end if;
 end;
 $$;

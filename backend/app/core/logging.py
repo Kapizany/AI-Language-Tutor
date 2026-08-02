@@ -23,6 +23,20 @@ _SAFE_EXTRA_FIELDS = (
     "mock_checkout",
     "test_checkout",
     "upstream_request_id",
+    "response_body",
+    "frequency",
+    "frequency_type",
+    "transaction_amount",
+    "currency_id",
+    "status",
+    "has_notification_url",
+    "has_plan",
+    "back_url_host",
+    "public_key_environment",
+    "access_token_environment",
+    "preapproval_id",
+    "payer_email_source",
+    "payer_email_domain",
 )
 
 # Nenhum log da aplicação deve carregar dado pessoal. O gateway já registra apenas

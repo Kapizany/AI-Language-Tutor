@@ -18,8 +18,9 @@ O backend recebe webhooks e sincroniza `user_subscriptions` via RPC
 
 - `POST /api/v1/billing/checkout/session` devolve valor, ciclo e
   `MERCADOPAGO_PUBLIC_KEY` para montar o Brick.
-- `POST /api/v1/billing/subscribe` recebe `{ billing_cycle, card_token_id }` e
-  cria Preapproval com `status: authorized`.
+- `POST /api/v1/billing/subscribe` recebe `{ billing_cycle, card_token_id, payer_email? }` e
+  cria Preapproval com um único `POST /preapproval` (`status: authorized`, `card_token_id`).
+  O `payer_email` enviado pelo Payment Brick tem prioridade sobre o e-mail do auth.
 - Não há mais checkout por redirect (`init_point`); mock local usa
   `MERCADOPAGO_MOCK_CHECKOUT=true` e ativa Premium via `/subscribe`.
 

@@ -177,6 +177,37 @@ class BillingService:
             return MERCADOPAGO_TEST_PAYER_EMAIL
         return user_email
 
+    @staticmethod
+    def _normalize_email(email: str | None) -> str | None:
+        if not email:
+            return None
+        normalized = email.strip().lower()
+        return normalized or None
+
+    @staticmethod
+    def _email_domain(email: str | None) -> str | None:
+        normalized = BillingService._normalize_email(email)
+        if not normalized:
+            return None
+        _, _, domain = normalized.partition("@")
+        return domain or None
+
+    def _resolve_subscribe_payer_email(
+        self,
+        *,
+        user_email: str | None,
+        brick_payer_email: str | None,
+    ) -> tuple[str | None, str]:
+        if self.test_checkout:
+            return MERCADOPAGO_TEST_PAYER_EMAIL, "test"
+        brick_email = self._normalize_email(brick_payer_email)
+        if brick_email:
+            return brick_email, "brick"
+        auth_email = self._normalize_email(user_email)
+        if auth_email:
+            return auth_email, "auth"
+        return None, "missing"
+
     def _assert_matching_credentials(self) -> None:
         if self.mock_checkout or not self.enabled:
             return
@@ -241,6 +272,7 @@ class BillingService:
         billing_cycle: BillingCycle | None,
         payload: dict[str, Any],
         preapproval_id: str | None = None,
+        payer_email_source: str | None = None,
     ) -> None:
         extra: dict[str, Any] = {
             "operation": operation,
@@ -248,6 +280,9 @@ class BillingService:
             "payload": self._sanitize_preapproval_payload(payload),
             **self._preapproval_payload_metadata(payload),
         }
+        if payer_email_source is not None:
+            extra["payer_email_source"] = payer_email_source
+            extra["payer_email_domain"] = self._email_domain(str(payload.get("payer_email") or ""))
         if billing_cycle is not None:
             extra["billing_cycle"] = billing_cycle
         if preapproval_id is not None:
@@ -262,6 +297,7 @@ class BillingService:
         response: httpx.Response,
         payload: dict[str, Any],
         preapproval_id: str | None = None,
+        payer_email_source: str | None = None,
     ) -> None:
         extra: dict[str, Any] = {
             "operation": operation,
@@ -272,6 +308,9 @@ class BillingService:
             "payload": self._sanitize_preapproval_payload(payload),
             **self._preapproval_payload_metadata(payload),
         }
+        if payer_email_source is not None:
+            extra["payer_email_source"] = payer_email_source
+            extra["payer_email_domain"] = self._email_domain(str(payload.get("payer_email") or ""))
         if billing_cycle is not None:
             extra["billing_cycle"] = billing_cycle
         if preapproval_id is not None:
@@ -283,28 +322,16 @@ class BillingService:
         )
 
     @staticmethod
-    def _pending_preapproval_idempotency_key(
+    def _subscription_idempotency_key(
         *,
         user_id: UUID,
         billing_cycle: BillingCycle,
-    ) -> str:
-        return str(
-            uuid5(
-                NAMESPACE_URL,
-                f"lume:mercadopago:preapproval-pending:{user_id}:{billing_cycle}",
-            )
-        )
-
-    @staticmethod
-    def _authorize_preapproval_idempotency_key(
-        *,
-        preapproval_id: str,
         card_token_id: str,
     ) -> str:
         return str(
             uuid5(
                 NAMESPACE_URL,
-                f"lume:mercadopago:preapproval-authorize:{preapproval_id}:{card_token_id}",
+                f"lume:mercadopago:preapproval:{user_id}:{billing_cycle}:{card_token_id}",
             )
         )
 
@@ -314,7 +341,7 @@ class BillingService:
         user_id: UUID,
         payer_email: str,
         billing_cycle: BillingCycle,
-        status: str,
+        card_token_id: str,
     ) -> dict[str, Any]:
         pricing = PRICING[billing_cycle]
         payload: dict[str, Any] = {
@@ -328,173 +355,67 @@ class BillingService:
                 "currency_id": "BRL",
             },
             "back_url": self._preapproval_back_url(),
-            "status": status,
+            "card_token_id": card_token_id,
+            "status": "authorized",
         }
         if self.notification_url:
             payload["notification_url"] = self.notification_url
         return payload
 
-    async def _find_pending_preapproval_id(
-        self,
-        *,
-        user_id: UUID,
-        billing_cycle: BillingCycle,
-    ) -> str | None:
-        try:
-            response = await self.db.get(
-                "/billing_checkouts",
-                params={
-                    "user_id": f"eq.{user_id}",
-                    "billing_cycle": f"eq.{billing_cycle}",
-                    "status": "eq.pending",
-                    "order": "created_at.desc",
-                    "limit": "1",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise BillingServiceError("Could not load pending billing checkout") from exc
-        if response.status_code >= 400:
-            raise BillingServiceError("Could not load pending billing checkout")
-        try:
-            rows = response.json()
-        except ValueError as exc:
-            raise BillingServiceError("Could not parse pending billing checkout") from exc
-        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
-            return None
-
-        preapproval_id = rows[0].get("external_subscription_id")
-        if not preapproval_id:
-            return None
-
-        try:
-            preapproval = await self.fetch_preapproval(str(preapproval_id))
-        except BillingServiceError:
-            return None
-        if str(preapproval.get("status") or "").lower() == "pending":
-            return str(preapproval_id)
-        return None
-
-    async def _create_pending_preapproval(
+    async def _create_authorized_preapproval(
         self,
         *,
         user_id: UUID,
         payer_email: str,
         billing_cycle: BillingCycle,
+        card_token_id: str,
+        payer_email_source: str,
     ) -> str:
         payload = self._preapproval_payload(
             user_id=user_id,
             payer_email=payer_email,
             billing_cycle=billing_cycle,
-            status="pending",
+            card_token_id=card_token_id,
         )
         logger.info(
-            "Creating pending Mercado Pago preapproval before card authorization",
+            "Creating authorized Mercado Pago preapproval with card token",
             extra={
                 "operation": "subscribe_card_token",
                 "provider": "mercadopago",
                 "billing_cycle": billing_cycle,
                 "back_url_host": urlsplit(str(payload["back_url"])).netloc,
+                "payer_email_source": payer_email_source,
+                "payer_email_domain": self._email_domain(payer_email),
             },
         )
         self._log_preapproval_request(
-            operation="subscribe_create_pending",
+            operation="subscribe_create_authorized",
             billing_cycle=billing_cycle,
             payload=payload,
+            payer_email_source=payer_email_source,
         )
         try:
             response = await self.mp.post(
                 "/preapproval",
                 json=payload,
                 headers={
-                    "X-Idempotency-Key": self._pending_preapproval_idempotency_key(
+                    "X-Idempotency-Key": self._subscription_idempotency_key(
                         user_id=user_id,
                         billing_cycle=billing_cycle,
-                    )
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise BillingServiceError("Mercado Pago pending preapproval transport failed") from exc
-
-        if response.status_code >= 400:
-            self._log_preapproval_rejection(
-                operation="subscribe_create_pending",
-                billing_cycle=billing_cycle,
-                response=response,
-                payload=payload,
-            )
-            request_id = response.headers.get("x-request-id")
-            if "Both payer and collector must be real or test users" in response.text:
-                raise BillingServiceError(
-                    "Mercado Pago rejected the payer/collector pairing. "
-                    "Use a buyer email/card that is not the seller account."
-                )
-            if response.status_code >= 500:
-                raise BillingProviderError(
-                    "Mercado Pago subscription service failed",
-                    status_code=response.status_code,
-                    request_id=request_id,
-                )
-            raise BillingServiceError(f"Mercado Pago pending preapproval failed: {response.text}")
-
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise BillingServiceError(
-                "Mercado Pago pending preapproval returned invalid JSON"
-            ) from exc
-        if not isinstance(body, dict) or not body.get("id"):
-            raise BillingServiceError(
-                "Mercado Pago pending preapproval returned an incomplete payload"
-            )
-
-        preapproval_id = str(body["id"])
-        await self._rpc(
-            "create_billing_checkout",
-            {
-                "p_user_id": str(user_id),
-                "p_billing_cycle": billing_cycle,
-                "p_external_subscription_id": preapproval_id,
-            },
-        )
-        return preapproval_id
-
-    async def _authorize_preapproval_with_card_token(
-        self,
-        *,
-        preapproval_id: str,
-        card_token_id: str,
-        billing_cycle: BillingCycle,
-    ) -> None:
-        payload = {"status": "authorized", "card_token_id": card_token_id}
-        self._log_preapproval_request(
-            operation="subscribe_authorize",
-            billing_cycle=billing_cycle,
-            payload=payload,
-            preapproval_id=preapproval_id,
-        )
-        try:
-            response = await self.mp.put(
-                f"/preapproval/{preapproval_id}",
-                json=payload,
-                headers={
-                    "X-Idempotency-Key": self._authorize_preapproval_idempotency_key(
-                        preapproval_id=preapproval_id,
                         card_token_id=card_token_id,
                     )
                 },
             )
         except httpx.HTTPError as exc:
-            raise BillingServiceError(
-                "Mercado Pago preapproval authorization transport failed"
-            ) from exc
+            raise BillingServiceError("Mercado Pago preapproval transport failed") from exc
 
         if response.status_code >= 400:
             self._log_preapproval_rejection(
-                operation="subscribe_authorize",
+                operation="subscribe_create_authorized",
                 billing_cycle=billing_cycle,
                 response=response,
                 payload=payload,
-                preapproval_id=preapproval_id,
+                payer_email_source=payer_email_source,
             )
             request_id = response.headers.get("x-request-id")
             if "Card token service not found" in response.text:
@@ -513,9 +434,25 @@ class BillingService:
                     status_code=response.status_code,
                     request_id=request_id,
                 )
-            raise BillingServiceError(
-                f"Mercado Pago preapproval authorization failed: {response.text}"
-            )
+            raise BillingServiceError(f"Mercado Pago preapproval failed: {response.text}")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise BillingServiceError("Mercado Pago preapproval returned invalid JSON") from exc
+        if not isinstance(body, dict) or not body.get("id"):
+            raise BillingServiceError("Mercado Pago preapproval returned an incomplete payload")
+
+        preapproval_id = str(body["id"])
+        await self._rpc(
+            "create_billing_checkout",
+            {
+                "p_user_id": str(user_id),
+                "p_billing_cycle": billing_cycle,
+                "p_external_subscription_id": preapproval_id,
+            },
+        )
+        return preapproval_id
 
     def _preapproval_back_url(self) -> str:
         """Mercado Pago rejects or fails on SPA fragment URLs like .../#/billing/success."""
@@ -657,6 +594,7 @@ class BillingService:
         user_email: str | None,
         billing_cycle: BillingCycle,
         card_token_id: str,
+        brick_payer_email: str | None = None,
     ) -> dict[str, Any]:
         logger.info(
             "Card-token subscription creation started",
@@ -724,7 +662,10 @@ class BillingService:
             await self._release_checkout_attempt(user_id)
             raise
 
-        payer_email = self._checkout_payer_email(user_email)
+        payer_email, payer_email_source = self._resolve_subscribe_payer_email(
+            user_email=user_email,
+            brick_payer_email=brick_payer_email,
+        )
         if not payer_email:
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Authenticated user email is required for subscription")
@@ -736,29 +677,12 @@ class BillingService:
             raise
 
         try:
-            preapproval_id = await self._find_pending_preapproval_id(
+            preapproval_id = await self._create_authorized_preapproval(
                 user_id=user_id,
+                payer_email=payer_email,
                 billing_cycle=billing_cycle,
-            )
-            if not preapproval_id:
-                preapproval_id = await self._create_pending_preapproval(
-                    user_id=user_id,
-                    payer_email=payer_email,
-                    billing_cycle=billing_cycle,
-                )
-            else:
-                logger.info(
-                    "Reusing pending Mercado Pago preapproval before card authorization",
-                    extra={
-                        "operation": "subscribe_card_token",
-                        "provider": "mercadopago",
-                        "billing_cycle": billing_cycle,
-                    },
-                )
-            await self._authorize_preapproval_with_card_token(
-                preapproval_id=preapproval_id,
                 card_token_id=token,
-                billing_cycle=billing_cycle,
+                payer_email_source=payer_email_source,
             )
         except BillingServiceError:
             await self._release_checkout_attempt(user_id)

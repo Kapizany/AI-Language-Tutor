@@ -23,6 +23,7 @@ class CheckoutSessionResponse(BaseModel):
 class SubscribeRequest(BaseModel):
     billing_cycle: BillingCycle
     card_token_id: str = Field(min_length=8, max_length=200)
+    payer_email: str | None = Field(default=None, max_length=320)
 
 
 class SubscribeResponse(BaseModel):

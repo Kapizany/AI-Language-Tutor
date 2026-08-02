@@ -46,6 +46,7 @@ export async function subscribeWithCardToken(
   accessToken: string,
   billingCycle: BillingCycle,
   cardTokenId: string,
+  payerEmail?: string | null,
 ) {
   return apiRequest<SubscribeResponse>("/api/v1/billing/subscribe", {
     accessToken,
@@ -53,6 +54,7 @@ export async function subscribeWithCardToken(
     body: {
       billing_cycle: billingCycle,
       card_token_id: cardTokenId,
+      ...(payerEmail ? { payer_email: payerEmail } : {}),
     },
   });
 }

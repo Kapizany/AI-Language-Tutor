@@ -230,6 +230,7 @@ async def subscribe_with_card_token(
             user_email=user.email,
             billing_cycle=payload.billing_cycle,
             card_token_id=payload.card_token_id,
+            brick_payer_email=payload.payer_email,
         )
     except Exception as exc:
         _raise_billing_http_error(

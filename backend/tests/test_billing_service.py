@@ -253,6 +253,25 @@ async def test_production_checkout_preserves_authenticated_user_email() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscribe_prefers_brick_payer_email_over_auth_email() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_test_checkout=False,
+        )
+    )
+    try:
+        email, source = service._resolve_subscribe_payer_email(
+            user_email="Auth@Example.com",
+            brick_payer_email=" Brick@Example.com ",
+        )
+        assert email == "brick@example.com"
+        assert source == "brick"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_billing_rpc_accepts_no_content_response() -> None:
     service = BillingService(
         Settings(
@@ -292,12 +311,10 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
     await service.mp.aclose()
 
     rpc_calls: list[str] = []
-    authorize_idempotency_keys: list[str] = []
+    idempotency_keys: list[str] = []
 
     def db_handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path.endswith("/billing_checkouts"):
-            return httpx.Response(200, request=request, json=[])
         if path.endswith("/rpc/reserve_billing_checkout_attempt"):
             rpc_calls.append("reserve")
             return httpx.Response(200, request=request, json={"allowed": True})
@@ -325,9 +342,10 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
                 json={"id": "card-token-abc123", "status": "active"},
             )
         if request.method == "POST" and request.url.path.endswith("/preapproval"):
+            idempotency_keys.append(request.headers["X-Idempotency-Key"])
             payload = json.loads(request.content)
-            assert payload["status"] == "pending"
-            assert "card_token_id" not in payload
+            assert payload["status"] == "authorized"
+            assert payload["card_token_id"] == "card-token-abc123"
             assert payload["payer_email"] == "learner@example.test"
             assert payload["auto_recurring"]["transaction_amount"] == 5.0
             assert "start_date" not in payload["auto_recurring"]
@@ -335,23 +353,6 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
             assert "#" not in payload["back_url"]
             return httpx.Response(
                 201,
-                request=request,
-                json={
-                    "id": "preapproval-999",
-                    "status": "pending",
-                    "external_reference": f"{user_id}:monthly",
-                    "payer_id": 42,
-                },
-            )
-        if request.method == "PUT" and request.url.path.endswith("/preapproval/preapproval-999"):
-            authorize_idempotency_keys.append(request.headers["X-Idempotency-Key"])
-            payload = json.loads(request.content)
-            assert payload == {
-                "status": "authorized",
-                "card_token_id": "card-token-abc123",
-            }
-            return httpx.Response(
-                200,
                 request=request,
                 json={
                     "id": "preapproval-999",
@@ -394,14 +395,16 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
         assert result["external_subscription_id"] == "preapproval-999"
         assert result["billing_cycle"] == "monthly"
         assert rpc_calls == ["reserve", "create_checkout", "process_event"]
-        assert authorize_idempotency_keys == [
-            service._authorize_preapproval_idempotency_key(
-                preapproval_id="preapproval-999",
+        assert idempotency_keys == [
+            service._subscription_idempotency_key(
+                user_id=user_id,
+                billing_cycle="monthly",
                 card_token_id="card-token-abc123",
             )
         ]
-        assert authorize_idempotency_keys[0] != service._authorize_preapproval_idempotency_key(
-            preapproval_id="preapproval-999",
+        assert idempotency_keys[0] != service._subscription_idempotency_key(
+            user_id=user_id,
+            billing_cycle="monthly",
             card_token_id="different-card-token",
         )
     finally:

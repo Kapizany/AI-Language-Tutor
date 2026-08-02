@@ -96,6 +96,8 @@ export function PremiumPaymentBrick({
         }}
         onSubmit={async (param) => {
           const token = param.token;
+          const payerEmail =
+            typeof param.payer?.email === "string" ? param.payer.email : session.payer_email;
           if (!token) {
             const message = "Não foi possível tokenizar o cartão. Tente novamente.";
             setLocalError(message);
@@ -109,6 +111,7 @@ export function PremiumPaymentBrick({
               accessToken,
               session.billing_cycle as BillingCycle,
               token,
+              payerEmail,
             );
             onSuccess();
           } catch (caught) {

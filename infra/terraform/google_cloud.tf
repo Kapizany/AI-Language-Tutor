@@ -6,6 +6,7 @@ locals {
     "iamcredentials.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "texttospeech.googleapis.com",
   ])
 
   backend_secret_ids = {
@@ -38,10 +39,13 @@ locals {
     MERCADOPAGO_BILLING_ENABLED     = "true"
     MERCADOPAGO_MOCK_CHECKOUT       = "false"
     # Real-credential smoke tests require a real payer identity.
-    MERCADOPAGO_TEST_CHECKOUT    = "false"
-    MERCADOPAGO_NOTIFICATION_URL = "${var.backend_public_url}/api/v1/billing/webhook"
-    MERCADOPAGO_BACK_URL         = "${var.site_url}/#/billing/success"
-    MERCADOPAGO_MANAGE_URL       = "https://www.mercadopago.com.br/subscriptions"
+    MERCADOPAGO_TEST_CHECKOUT      = "false"
+    MERCADOPAGO_NOTIFICATION_URL   = "${var.backend_public_url}/api/v1/billing/webhook"
+    MERCADOPAGO_BACK_URL           = "${var.site_url}/#/billing/success"
+    MERCADOPAGO_MANAGE_URL         = "https://www.mercadopago.com.br/subscriptions"
+    SPEECH_SYNTHESIS_ENABLED       = "true"
+    SPEECH_SYNTHESIS_PROVIDER      = "google_standard"
+    SPEECH_SYNTHESIS_CACHE_VERSION = "2026-08-02-v1"
   }
 }
 

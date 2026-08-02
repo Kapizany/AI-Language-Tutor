@@ -62,6 +62,7 @@ import {
   type ScenarioCatalogItem,
 } from "@/lib/conversation";
 import { loadEntitlements, planLabel, type EntitlementsSummary } from "@/lib/entitlements";
+import { loadIsAdmin } from "@/lib/admin";
 import {
   goalLabels,
   languageDetails,
@@ -1016,7 +1017,7 @@ function Profile({
   saveSettings: (name: string, preferences: LearnerPreferences) => Promise<AuthFeedback>;
   session: Session | null;
 }) {
-  const { preferences, studiedLanguages, switchLanguage, addLanguage } = useLearner();
+  const { preferences, studiedLanguages, isAdmin, switchLanguage, addLanguage } = useLearner();
   const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
   const [name, setName] = useState(displayName);
   const [draft, setDraft] = useState<LearnerPreferences>(preferences || {
@@ -1107,14 +1108,19 @@ function Profile({
 
   return (
     <div className="screen-content">
-      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você." displayName={displayName}/>
+      <AppHeader title="Perfil e preferências" subtitle="Ajuste como o Lume ensina você." displayName={displayName} onNavigate={go}/>
       <div className="settings-layout">
         <aside className="settings-nav">
           <button className={section === "profile" ? "active" : ""} onClick={() => setSection("profile")}><CircleUserRound/> Perfil</button>
           <button className={section === "languages" ? "active" : ""} onClick={() => setSection("languages")}><Languages/> Idiomas</button>
           <button className={section === "plan" ? "active" : ""} onClick={() => setSection("plan")}><Target/> Plano e metas</button>
           <button className={section === "notifications" ? "active" : ""} onClick={() => setSection("notifications")}><Bell/> Notificações</button>
-          <button onClick={() => go("privacy")}><ShieldCheck/> Dados e privacidade</button>
+          {isAdmin && (
+            <button type="button" className="settings-admin-link" onClick={() => go("admin")}>
+              <ShieldCheck aria-hidden="true" focusable="false" /> Administração
+            </button>
+          )}
+          <button onClick={() => go("privacy")}><LockKeyhole aria-hidden="true" focusable="false" /> Dados e privacidade</button>
         </aside>
         <main className="settings-panel">
           {section === "profile" && <>
@@ -2002,6 +2008,15 @@ export default function ProductPrototype() {
     useState<CompletedConversationView | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const refreshAdminAccess = async (userId: string | undefined) => {
+    if (!userId) {
+      setIsAdmin(false);
+      return;
+    }
+    setIsAdmin(await loadIsAdmin(userId));
+  };
 
   const loadStudiedLanguages = async (userId: string, nextPreferences: LearnerPreferences | null) => {
     const supabase = getSupabaseBrowserClient();
@@ -2077,7 +2092,10 @@ export default function ProductPrototype() {
           ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow)
           : null;
         setPreferences(mappedPreferences);
-        await loadStudiedLanguages(currentSession.user.id, mappedPreferences);
+        await Promise.all([
+          loadStudiedLanguages(currentSession.user.id, mappedPreferences),
+          refreshAdminAccess(currentSession.user.id),
+        ]);
       }
 
       const fromHash = window.location.hash.replace("#/", "") as ScreenId;
@@ -2108,6 +2126,7 @@ export default function ProductPrototype() {
         }
         setPreferences(null);
         setStudiedLanguages([]);
+        setIsAdmin(false);
         setOnboardingCompleted(false);
         setDisplayName("Aluno");
         setScreen("login");
@@ -2310,7 +2329,10 @@ export default function ProductPrototype() {
       ? mapLearnerPreferences(preferencesRow as LearnerPreferencesRow)
       : null;
     setPreferences(mappedPreferences);
-    await loadStudiedLanguages(data.user.id, mappedPreferences);
+    await Promise.all([
+      loadStudiedLanguages(data.user.id, mappedPreferences),
+      refreshAdminAccess(data.user.id),
+    ]);
     navigate(hasCompletedOnboarding ? "dashboard" : "onboarding");
     return {};
   };
@@ -2509,6 +2531,7 @@ export default function ProductPrototype() {
     <LearnerProvider
       preferences={preferences}
       studiedLanguages={studiedLanguages}
+      isAdmin={isAdmin}
       switchLanguage={switchLanguage}
       addLanguage={addLanguage}
     >

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight } from "lucide-react";
+import { Bell, ChevronRight, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useLearnerOptional } from "@/lib/learner-context";
@@ -82,6 +82,17 @@ export function AppHeader({
       </div>
       <div className="app-header-tools">
         <LanguageSwitcher />
+        {learner?.isAdmin && onNavigate && (
+          <button
+            type="button"
+            className="icon-button admin-shortcut"
+            title="Painel administrativo"
+            aria-label="Abrir painel administrativo"
+            onClick={() => onNavigate("admin")}
+          >
+            <ShieldCheck size={20} />
+          </button>
+        )}
         <div className="notification-center">
           <button
             className="icon-button"

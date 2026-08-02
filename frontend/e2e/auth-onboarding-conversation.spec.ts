@@ -91,6 +91,9 @@ async function mockSupabase(
         current_level: preferences.current_level,
       }] : []);
     }
+    if (path.endsWith("/rest/v1/user_roles")) {
+      return json(route, []);
+    }
     if (
       path.endsWith("/rest/v1/rpc/save_learner_settings")
       || path.endsWith("/rest/v1/rpc/switch_active_language")

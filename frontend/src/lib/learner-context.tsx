@@ -7,6 +7,7 @@ import type { LearnerPreferences, TargetLanguage } from "@/lib/learner";
 type LearnerContextValue = {
   preferences: LearnerPreferences | null;
   studiedLanguages: LearnerLanguage[];
+  isAdmin: boolean;
   switchLanguage: (language: TargetLanguage) => Promise<{ error?: string }>;
   addLanguage: (language: TargetLanguage, level?: LearnerLanguage["currentLevel"]) => Promise<{ error?: string }>;
 };
@@ -17,11 +18,14 @@ export function LearnerProvider({
   children,
   preferences,
   studiedLanguages,
+  isAdmin,
   switchLanguage,
   addLanguage,
 }: LearnerContextValue & { children: ReactNode }) {
   return (
-    <LearnerContext.Provider value={{ preferences, studiedLanguages, switchLanguage, addLanguage }}>
+    <LearnerContext.Provider
+      value={{ preferences, studiedLanguages, isAdmin, switchLanguage, addLanguage }}
+    >
       {children}
     </LearnerContext.Provider>
   );

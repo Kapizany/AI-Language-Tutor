@@ -1,4 +1,19 @@
 import { apiRequest } from "@/lib/api-client";
+import { getSupabaseBrowserClient } from "@/lib/supabase";
+
+export async function loadIsAdmin(userId: string): Promise<boolean> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) return false;
+
+  const { data, error } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  return !error && Boolean(data);
+}
 
 export type AdminOverview = {
   users_total: number;

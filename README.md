@@ -21,6 +21,9 @@ The system supports multiple languages and interaction modes, including text, vo
 - 📖 Reading and listening comprehension exercises
 - 📈 Learning analytics and progress dashboard
 - 🎯 Adaptive difficulty based on learner performance
+- 🌐 Multiple studied languages with per-language levels and a header switcher
+- 💳 Free and Premium plans with daily feature entitlements
+- 🛡️ Protected admin panel for usage, accounts and audited operations
 - 📱 Cross-platform support through Web API and mobile-ready architecture
 
 ## Current architecture
@@ -61,22 +64,29 @@ learning-content catalogs, progress tracking, personalized review, textual
 conversations with history and summaries, recorded-audio transcription, secure
 account deletion, CI/CD and cost-controlled AI routing.
 
+**Recently completed (August 2026):**
+
+- **Phase 6 — Plans and administration:** `Free`/`Premium` plans, daily
+  entitlements, admin roles, `/admin` panel, account management and audit logs.
+  See [`docs/adr/0010-plans-entitlements-and-admin.md`](docs/adr/0010-plans-entitlements-and-admin.md).
+- **Multiple languages:** `learner_languages` stores a level per studied language;
+  the header flag switcher activates a language and restores its saved level.
+- **Accessibility and navigation:** simplified mobile menu, conversation layout
+  contained to the viewport, skip link, focus styles and WCAG-oriented E2E checks.
+
 The next planned phases are:
 
-1. **Plans and administration:** `Free` and `Premium` plans, protected
-   administrative roles, feature entitlements, usage/activity analytics,
-   account management and audited administrative actions.
-2. **Text-to-speech:** Google Cloud Standard TTS for words, phrases,
+1. **Text-to-speech:** Google Cloud Standard TTS for words, phrases,
    explanations and tutor messages. A provider-neutral `SpeechProvider`
    interface will make Google replaceable without changing product features.
-3. **Corrections and spaced review:** structured feedback, recurring-error
+2. **Corrections and spaced review:** structured feedback, recurring-error
    tracking and an FSRS/SM-2-style review schedule.
-4. **Adaptive learning:** proficiency assessment, weekly study plans and
+3. **Adaptive learning:** proficiency assessment, weekly study plans and
    exercises derived from observed learner needs.
-5. **Advanced voice:** pronunciation feedback followed by real-time voice
+4. **Advanced voice:** pronunciation feedback followed by real-time voice
    conversations once latency, quality and cost are validated.
-6. **Production maturity:** E2E coverage, staging, observability, backups,
-   accessibility, privacy operations and a controlled private beta.
+5. **Production maturity:** broader E2E coverage, staging, observability,
+   backups, privacy operations and a controlled private beta.
 
 Longer-term possibilities include exam-preparation modules, teacher and
 classroom dashboards, live translation, community challenges, native mobile and
@@ -180,6 +190,71 @@ can use Supabase Table Editor to add, reorder, unpublish, or remove lessons
 without rebuilding the frontend. Prefer setting `is_published = false` when a
 lesson already has learner history.
 
+### Multiple studied languages
+
+Each learner can keep separate levels in `learner_languages` (English, Spanish,
+French and Italian). The active language lives in `learner_preferences` and is
+switched from the header flag menu or from **Profile → Idiomas**. RPCs:
+
+- `switch_active_language`
+- `add_learner_language`
+- `update_learner_language_level`
+
+Migrations: `20260801150000_learner_languages.sql` and
+`20260801151000_repair_learner_languages_backfill.sql`.
+
+## Administration
+
+The admin panel is a separate route in the web app. It never trusts a role sent
+by the browser; FastAPI re-checks the JWT and reads `user_roles` through the
+service role.
+
+### How to open the admin panel
+
+1. Log in with a normal learner account (onboarding completed).
+2. Open **`/#/admin`** on the app origin, for example:
+   - production: `https://ai-language-tutor.caps-labs.com/#/admin`
+   - local dev: `http://localhost:3000/#/admin`
+3. Ensure the backend is running and reachable (`NEXT_PUBLIC_API_BASE_URL` or
+   the proxy configured in the frontend).
+
+If your account is not promoted, the panel shows an access-denied message.
+
+### How to promote the first administrator
+
+Create the account through the normal signup flow, copy the Supabase user UUID,
+then run in the Supabase SQL editor (or any trusted `service_role` session):
+
+```sql
+insert into public.user_roles (user_id, role)
+values ('00000000-0000-0000-0000-000000000000', 'admin')
+on conflict (user_id, role) do update set role = excluded.role;
+```
+
+Replace the UUID with your user id from **Authentication → Users**. There is no
+public admin signup.
+
+Revoke admin access:
+
+```sql
+delete from public.user_roles
+where user_id = '00000000-0000-0000-0000-000000000000'
+  and role = 'admin';
+```
+
+### What the panel provides
+
+- Overview: users, activity (DAU/WAU), plan distribution, LLM usage and cost
+- Users: search, daily usage, change plan (`free` / `premium`), suspend or
+  reactivate accounts
+- Features: normalized usage by feature key
+- Audit: administrative mutations from `admin_audit_logs`
+
+Learners see their own plan usage under **Profile → Plano e metas**
+(`GET /api/v1/account/entitlements`).
+
+Further design notes: [`docs/adr/0010-plans-entitlements-and-admin.md`](docs/adr/0010-plans-entitlements-and-admin.md).
+
 ## Deployment
 
 The frontend is deployed to the existing Direct Upload Cloudflare Pages project
@@ -215,15 +290,9 @@ terraform -chdir=infra/terraform apply
 Sensitive Terraform variables, plans, state files, and local provider data are
 ignored by Git.
 
-## Planned administration and speech architecture
+## Speech architecture (planned)
 
-Administrative access will be authorized by the backend using protected roles;
-it will never trust a role supplied by the browser or writable user metadata.
-Plan entitlements and usage limits will be persisted and enforced server-side.
-The initial plans are `Free` and `Premium`; payment-provider fields will remain
-optional until billing is implemented.
-
-Speech synthesis will use Google Cloud Standard TTS behind a provider-neutral
+Text-to-speech will use Google Cloud Standard TTS behind a provider-neutral
 backend contract:
 
 ```text
@@ -234,3 +303,6 @@ The frontend will never receive Google credentials. Generated audio will be
 created on demand, cached by text/language/voice/rate/provider version, metered
 in characters, and constrained by the active plan. Future providers can be
 added as adapters without changing the API consumed by the frontend.
+
+Plan entitlements and daily limits are already persisted and enforced
+server-side for conversations, LLM requests and transcriptions.

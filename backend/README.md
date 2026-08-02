@@ -99,20 +99,25 @@ US$ 0.02 reserved per request
 Change database limits through `public.llm_budget_policies`, not from the
 frontend.
 
-## Planned plans and administrative API
+## Plans, entitlements and administration
 
-The next backend phase introduces protected `Free` and `Premium` plans,
-server-side feature entitlements, normalized feature-usage events and
-administrative analytics.
+Implemented in Phase 6. Protected `Free` and `Premium` plans, daily feature
+entitlements, normalized usage events, `/api/v1/admin/*` routes and the
+`/#/admin` panel. Administrative authorization is evaluated from `user_roles`
+via the backend service role; the API never trusts a role sent by the frontend.
 
-Administrative authorization must be evaluated from a protected database role
-or trusted JWT claim. The API must never trust a role sent by the frontend or
-stored in user-editable metadata. The Supabase service-role key remains
-backend-only, every privileged action is authorized again in FastAPI, and
-administrative mutations are recorded in an audit log.
+**Promote an admin** (Supabase SQL editor):
 
-The first administrator will be promoted explicitly by Supabase user UUID after
-normal account creation. There will be no public administrator signup.
+```sql
+insert into public.user_roles (user_id, role)
+values ('your-user-uuid', 'admin')
+on conflict (user_id, role) do update set role = excluded.role;
+```
+
+Then open `/#/admin` while logged in. Full steps are in the repository
+[`README.md`](../README.md#administration).
+
+See [`docs/adr/0010-plans-entitlements-and-admin.md`](../docs/adr/0010-plans-entitlements-and-admin.md).
 
 ## Planned text-to-speech API
 

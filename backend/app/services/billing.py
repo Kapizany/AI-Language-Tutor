@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
 
@@ -44,6 +44,19 @@ class BillingNotConfiguredError(BillingServiceError):
 
 class BillingCredentialMismatchError(BillingNotConfiguredError):
     pass
+
+
+class BillingProviderError(BillingServiceError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = request_id
 
 
 class BillingSellerIsBuyerError(BillingServiceError):
@@ -166,6 +179,21 @@ class BillingService:
                 "Mercado Pago public key and access token are from different environments"
             )
 
+    @staticmethod
+    def _subscription_idempotency_key(
+        *,
+        user_id: UUID,
+        billing_cycle: BillingCycle,
+        card_token_id: str,
+    ) -> str:
+        """Keep retries for the same one-time card token idempotent."""
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                f"lume:mercadopago:preapproval:{user_id}:{billing_cycle}:{card_token_id}",
+            )
+        )
+
     def _preapproval_back_url(self) -> str:
         """Mercado Pago rejects or fails on SPA fragment URLs like .../#/billing/success."""
         raw = (self.back_url or "").strip()
@@ -199,6 +227,26 @@ class BillingService:
         collector_email = await self._collector_email()
         if collector_email and collector_email == payer_email.strip().lower():
             raise BillingSellerIsBuyerError("Payer email matches the Mercado Pago seller account")
+
+    async def _validate_card_token(self, card_token_id: str) -> None:
+        try:
+            response = await self.mp.get(f"/v1/card_tokens/{card_token_id}")
+        except httpx.HTTPError as exc:
+            raise BillingProviderError(
+                "Mercado Pago card-token validation transport failed"
+            ) from exc
+
+        request_id = response.headers.get("x-request-id")
+        if response.status_code == 404:
+            raise BillingCredentialMismatchError(
+                "Mercado Pago could not access the card token with the configured access token"
+            )
+        if response.status_code >= 400:
+            raise BillingProviderError(
+                "Mercado Pago rejected card-token validation",
+                status_code=response.status_code,
+                request_id=request_id,
+            )
 
     async def close(self) -> None:
         await self.db.aclose()
@@ -351,6 +399,12 @@ class BillingService:
                 retry_after_seconds=retry_after,
             )
 
+        try:
+            await self._validate_card_token(token)
+        except BillingServiceError:
+            await self._release_checkout_attempt(user_id)
+            raise
+
         pricing = PRICING[billing_cycle]
         payer_email = self._checkout_payer_email(user_email)
         if not payer_email:
@@ -398,7 +452,13 @@ class BillingService:
             response = await self.mp.post(
                 "/preapproval",
                 json=payload,
-                headers={"X-Idempotency-Key": str(uuid4())},
+                headers={
+                    "X-Idempotency-Key": self._subscription_idempotency_key(
+                        user_id=user_id,
+                        billing_cycle=billing_cycle,
+                        card_token_id=token,
+                    )
+                },
             )
         except httpx.HTTPError as exc:
             logger.exception(
@@ -438,10 +498,10 @@ class BillingService:
                     "Use a buyer email/card that is not the seller account."
                 )
             if response.status_code >= 500:
-                raise BillingServiceError(
-                    "Mercado Pago could not authorize the subscription. "
-                    "Confirm the Lume account email is not the Mercado Pago seller "
-                    "account, use a credit card in the cardholder name, and try again."
+                raise BillingProviderError(
+                    "Mercado Pago subscription service failed",
+                    status_code=response.status_code,
+                    request_id=response.headers.get("x-request-id"),
                 )
             raise BillingServiceError(f"Mercado Pago subscribe failed: {response.text}")
 

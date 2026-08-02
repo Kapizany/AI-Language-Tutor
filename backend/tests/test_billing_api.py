@@ -7,7 +7,7 @@ from app.api.dependencies import get_billing_service
 from app.core.security import get_current_user
 from app.main import app
 from app.schemas.auth import AuthenticatedUser
-from app.services.billing import BillingService
+from app.services.billing import BillingProviderError, BillingService
 from tests.support import LEARNER_ID
 
 
@@ -120,6 +120,41 @@ async def test_subscribe_activates_premium_with_card_token() -> None:
     payload = response.json()
     assert payload["plan_id"] == "premium"
     billing.create_subscription_with_card_token.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_returns_provider_support_code_without_blame_message() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.create_subscription_with_card_token.side_effect = BillingProviderError(
+        "Mercado Pago subscription service failed",
+        status_code=500,
+        request_id="mp-request-123",
+    )
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/subscribe",
+            json={
+                "billing_cycle": "monthly",
+                "card_token_id": "card-token-xyz",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "mp-request-123" in detail
+    assert "e-mail de comprador" not in detail
+    assert "cartão de crédito válido" not in detail
 
 
 @pytest.mark.asyncio

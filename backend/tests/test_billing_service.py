@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.services.billing import (
     MERCADOPAGO_TEST_PAYER_EMAIL,
     BillingCredentialMismatchError,
+    BillingProviderError,
     BillingSellerIsBuyerError,
     BillingService,
     is_mercadopago_simulation_webhook,
@@ -175,6 +176,51 @@ async def test_mismatched_public_key_and_access_token_are_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_card_token_must_be_accessible_with_configured_access_token() -> None:
+    service = BillingService(Settings(_env_file=None))
+    await service.mp.aclose()
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                404,
+                request=request,
+                json={"message": "Card token service not found"},
+            )
+        ),
+    )
+    try:
+        with pytest.raises(BillingCredentialMismatchError):
+            await service._validate_card_token("card-token-from-another-app")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_card_token_validation_preserves_provider_request_id() -> None:
+    service = BillingService(Settings(_env_file=None))
+    await service.mp.aclose()
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                500,
+                request=request,
+                headers={"x-request-id": "mp-request-123"},
+                json={"message": "Internal server error"},
+            )
+        ),
+    )
+    try:
+        with pytest.raises(BillingProviderError) as raised:
+            await service._validate_card_token("card-token")
+        assert raised.value.status_code == 500
+        assert raised.value.request_id == "mp-request-123"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_test_checkout_always_uses_sandbox_payer_email() -> None:
     service = BillingService(
         Settings(
@@ -246,6 +292,7 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
     await service.mp.aclose()
 
     rpc_calls: list[str] = []
+    idempotency_keys: list[str] = []
 
     def db_handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -269,7 +316,14 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
         return httpx.Response(500, request=request, json={"error": path})
 
     def mp_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/v1/card_tokens/" in request.url.path:
+            return httpx.Response(
+                200,
+                request=request,
+                json={"id": "card-token-abc123", "status": "active"},
+            )
         if request.method == "POST" and request.url.path.endswith("/preapproval"):
+            idempotency_keys.append(request.headers["X-Idempotency-Key"])
             payload = json.loads(request.content)
             assert payload["status"] == "authorized"
             assert payload["card_token_id"] == "card-token-abc123"
@@ -321,6 +375,18 @@ async def test_create_subscription_with_card_token_authorizes_preapproval() -> N
         assert result["external_subscription_id"] == "preapproval-999"
         assert result["billing_cycle"] == "monthly"
         assert rpc_calls == ["reserve", "create_checkout", "process_event"]
+        assert idempotency_keys == [
+            service._subscription_idempotency_key(
+                user_id=user_id,
+                billing_cycle="monthly",
+                card_token_id="card-token-abc123",
+            )
+        ]
+        assert idempotency_keys[0] != service._subscription_idempotency_key(
+            user_id=user_id,
+            billing_cycle="monthly",
+            card_token_id="different-card-token",
+        )
     finally:
         await service.close()
 

@@ -18,6 +18,7 @@ from app.services.billing import (
     AlreadyPremiumError,
     BillingCredentialMismatchError,
     BillingNotConfiguredError,
+    BillingProviderError,
     BillingRateLimitError,
     BillingSellerIsBuyerError,
     BillingServiceError,
@@ -39,7 +40,7 @@ def _raise_billing_http_error(
 ) -> NoReturn:
     if isinstance(exc, BillingCredentialMismatchError):
         logger.warning(
-            "Billing credentials are mismatched between public key and access token",
+            "Billing credentials or card token are not from the same Mercado Pago application",
             extra={
                 "operation": operation,
                 "provider": "mercadopago",
@@ -51,7 +52,7 @@ def _raise_billing_http_error(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Credenciais do Mercado Pago inconsistentes: a public key e o "
-                "access token precisam ser do mesmo ambiente (ambas teste ou ambas produção)."
+                "access token precisam pertencer à mesma aplicação e ao mesmo ambiente."
             ),
         ) from exc
     if isinstance(exc, BillingNotConfiguredError):
@@ -125,6 +126,27 @@ def _raise_billing_http_error(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=detail,
         ) from exc
+    if isinstance(exc, BillingProviderError):
+        logger.error(
+            "Mercado Pago provider operation failed",
+            extra={
+                "operation": operation,
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "http_status": exc.status_code,
+                "upstream_request_id": exc.request_id,
+            },
+        )
+        detail = (
+            "O Mercado Pago não conseguiu processar a assinatura agora. "
+            "Tente novamente em alguns minutos."
+        )
+        if exc.request_id:
+            detail += f" Código de suporte: {exc.request_id}."
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=detail,
+        ) from exc
     if isinstance(exc, BillingServiceError):
         logger.exception(
             "Billing operation failed",
@@ -136,10 +158,7 @@ def _raise_billing_http_error(
             },
         )
         detail = failure_detail
-        message = str(exc)
-        if message.startswith("Mercado Pago could not authorize") or message.startswith(
-            "Mercado Pago rejected the payer/collector"
-        ):
+        if str(exc).startswith("Mercado Pago rejected the payer/collector"):
             detail = (
                 "O Mercado Pago recusou autorizar a assinatura. "
                 "Use um e-mail de comprador diferente da conta vendedora do Mercado Pago "

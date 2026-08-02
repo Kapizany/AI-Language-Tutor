@@ -32,7 +32,7 @@ const primaryNav: NavItem[] = [
 
 const secondaryNav: NavItem[] = [
   { id: "plan", label: "Minha rotina", shortLabel: "Rotina", icon: Map },
-  { id: "sessions", label: "Histórico de conversas", shortLabel: "Histórico", icon: History },
+  { id: "sessions", label: "Histórico", shortLabel: "Histórico", icon: History },
   { id: "vocabulary", label: "Revisar", shortLabel: "Revisar", icon: RotateCcw },
   { id: "progress", label: "Progresso", shortLabel: "Progresso", icon: BarChart3 },
 ];
@@ -43,11 +43,7 @@ const menuScreens = new Set<ScreenId>([
 ]);
 
 function NavIcon({ icon: Icon }: { icon: IconType }) {
-  return (
-    <span aria-hidden="true">
-      <Icon />
-    </span>
-  );
+  return <Icon aria-hidden size={20} />;
 }
 
 export function AppNav({

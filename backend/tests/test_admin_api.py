@@ -126,10 +126,10 @@ async def test_entitlements_endpoint_returns_plan_usage() -> None:
         "account_status": "active",
         "max_learner_messages_per_session": 30,
         "usage": {
-            "conversation_sessions": {"used": 1, "limit": 3},
-            "llm_requests": {"used": 4, "limit": 100},
+            "conversation_sessions": {"used": 1, "limit": 2},
+            "llm_requests": {"used": 4, "limit": 40},
             "llm_cost_usd": {"used": 0.01, "limit": 0.25},
-            "transcriptions": {"used": 0, "limit": 20},
+            "transcriptions": {"used": 0, "limit": 10},
         },
     }
 
@@ -149,4 +149,4 @@ async def test_entitlements_endpoint_returns_plan_usage() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["plan_id"] == "free"
-    assert payload["usage"]["conversation_sessions"]["limit"] == 3
+    assert payload["usage"]["conversation_sessions"]["limit"] == 2

@@ -49,7 +49,7 @@ export function AppHeader({
     {
       id: "conversation",
       title: "Continue conversando",
-      detail: "Você tem três conversas por dia para praticar com o tutor.",
+      detail: "Você tem duas conversas por dia para praticar com o tutor.",
       screen: "scenarios",
     },
   ];

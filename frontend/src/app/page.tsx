@@ -1037,6 +1037,7 @@ function Profile({
   const [feedback, setFeedback] = useState<AuthFeedback>({});
   const [saving, setSaving] = useState(false);
   const [entitlements, setEntitlements] = useState<EntitlementsSummary | null>(null);
+  const [entitlementsLoading, setEntitlementsLoading] = useState(false);
   const [entitlementsError, setEntitlementsError] = useState("");
 
   const resolvedLanguageLevels = studiedLanguages.map((entry) => ({
@@ -1054,11 +1055,14 @@ function Profile({
     let active = true;
     const load = async () => {
       setEntitlementsError("");
+      setEntitlementsLoading(true);
       try {
         const summary = await loadEntitlements(session.access_token);
         if (active) setEntitlements(summary);
       } catch {
         if (active) setEntitlementsError("Não foi possível carregar o uso do seu plano.");
+      } finally {
+        if (active) setEntitlementsLoading(false);
       }
     };
     void load();
@@ -1133,7 +1137,7 @@ function Profile({
               const active = preferences?.targetLanguage === entry.targetLanguage;
               return (
                 <article key={entry.targetLanguage} className={`language-card${active ? " active" : ""}`}>
-                  <div className="language-card-title"><span aria-hidden="true">{details.flag}</span><div><strong>{details.name}</strong>{active && <span className="language-card-badge">Ativo agora</span>}</div></div>
+                  <div className="language-card-title"><span className="language-card-flag" aria-hidden="true">{details.flag}</span><div><strong>{details.name}</strong>{active && <span className="language-card-badge">Ativo agora</span>}</div></div>
                   <label>Nível<select value={entry.currentLevel} onChange={(event) => setLevelEdits((current) => ({ ...current, [entry.targetLanguage]: event.target.value as LearnerPreferences["currentLevel"] }))}>{selectableLevels.map((value) => <option key={value} value={value}>{levelLabels[value]}</option>)}</select></label>
                   {!active && <Button variant="secondary" onClick={() => void switchLanguage(entry.targetLanguage)}>Usar agora</Button>}
                 </article>
@@ -1143,25 +1147,39 @@ function Profile({
           {availableLanguages.length > 0 && <div className="language-card-add"><label>Adicionar outro idioma<select value={newLanguage} onChange={(event) => setNewLanguage(event.target.value as TargetLanguage)}><option value="">Selecione</option>{availableLanguages.map((language) => <option key={language} value={language}>{languageDetails[language].flag} {languageDetails[language].name}</option>)}</select></label><Button variant="secondary" disabled={!newLanguage || saving} onClick={() => void addStudiedLanguage()}>Adicionar idioma</Button></div>}
           </section>}
           {section === "plan" && <section><h3>Plano e metas</h3>
-            {entitlements && (
-              <div className="usage-grid" aria-label="Uso diário do plano">
-                <article className="usage-card">
-                  <span>Plano atual</span>
-                  <strong>{planLabel(entitlements.plan_id)}</strong>
-                </article>
-                <article className="usage-card">
-                  <span>Conversas hoje</span>
-                  <strong>{entitlements.usage.conversation_sessions.used} / {entitlements.usage.conversation_sessions.limit}</strong>
-                </article>
-                <article className="usage-card">
-                  <span>Requisições de IA</span>
-                  <strong>{entitlements.usage.llm_requests.used} / {entitlements.usage.llm_requests.limit}</strong>
-                </article>
-                <article className="usage-card">
-                  <span>Transcrições hoje</span>
-                  <strong>{entitlements.usage.transcriptions.used} / {entitlements.usage.transcriptions.limit}</strong>
-                </article>
+            {(entitlementsLoading || entitlements) && (
+              <div className="usage-grid" aria-label="Uso diário do plano" aria-busy={entitlementsLoading}>
+                {entitlementsLoading ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <article key={index} className="usage-card usage-card-skeleton">
+                      <span className="usage-skeleton-line usage-skeleton-label" />
+                      <strong className="usage-skeleton-line usage-skeleton-value" />
+                    </article>
+                  ))
+                ) : entitlements ? (
+                  <>
+                    <article className="usage-card">
+                      <span>Plano atual</span>
+                      <strong>{planLabel(entitlements.plan_id)}</strong>
+                    </article>
+                    <article className="usage-card">
+                      <span>Conversas hoje</span>
+                      <strong>{entitlements.usage.conversation_sessions.used} / {entitlements.usage.conversation_sessions.limit}</strong>
+                    </article>
+                    <article className="usage-card">
+                      <span title="Cada resposta do tutor, correção ou atividade de estudo conta como uma chamada.">Chamadas de IA</span>
+                      <strong>{entitlements.usage.llm_requests.used} / {entitlements.usage.llm_requests.limit}</strong>
+                    </article>
+                    <article className="usage-card">
+                      <span>Transcrições hoje</span>
+                      <strong>{entitlements.usage.transcriptions.used} / {entitlements.usage.transcriptions.limit}</strong>
+                    </article>
+                  </>
+                ) : null}
               </div>
+            )}
+            {!entitlementsLoading && entitlements && (
+              <p className="usage-note">Chamadas de IA incluem respostas do tutor, correções e exercícios. Os limites são redefinidos todo dia.</p>
             )}
             {entitlementsError && <div className="form-message form-error" role="alert">{entitlementsError}</div>}
             <div className="form-grid">

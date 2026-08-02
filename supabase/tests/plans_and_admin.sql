@@ -114,6 +114,27 @@ begin
 end;
 $$;
 
+-- Entitlements summary reflects free plan limits
+do $$
+declare
+  summary jsonb;
+begin
+  summary := public.get_user_entitlements_summary('20000000-0000-0000-0000-000000000001');
+  if summary ->> 'plan_id' <> 'free' then
+    raise exception 'Entitlement failure: free user plan mismatch';
+  end if;
+  if (summary #>> '{usage,conversation_sessions,limit}')::numeric <> 2 then
+    raise exception 'Entitlement failure: free session limit mismatch';
+  end if;
+  if (summary #>> '{usage,llm_requests,limit}')::numeric <> 40 then
+    raise exception 'Entitlement failure: free llm request limit mismatch';
+  end if;
+  if (summary #>> '{usage,transcriptions,limit}')::numeric <> 10 then
+    raise exception 'Entitlement failure: free transcription limit mismatch';
+  end if;
+end;
+$$;
+
 -- Plan change is audited
 do $$
 declare
@@ -222,7 +243,7 @@ begin
 end;
 $$;
 
--- Entitlements summary reflects plan limits
+-- Entitlements summary reflects premium plan limits
 do $$
 declare
   summary jsonb;

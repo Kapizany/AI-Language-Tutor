@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, Plus } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useLearnerOptional } from "@/lib/learner-context";
 import {
   languageDetails,
@@ -19,6 +19,8 @@ export function LanguageSwitcher() {
   const [adding, setAdding] = useState<TargetLanguage | null>(null);
   const panelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
   const preferences = learner?.preferences;
   const studiedLanguages = learner?.studiedLanguages || [];
@@ -44,6 +46,49 @@ export function LanguageSwitcher() {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current || !panelRef.current) {
+      setPanelStyle({});
+      return;
+    }
+
+    const reposition = () => {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      const panel = panelRef.current;
+      if (!trigger || !panel) return;
+
+      const margin = 12;
+      const panelWidth = Math.min(320, window.innerWidth - margin * 2);
+      const panelHeight = panel.offsetHeight;
+      let left = trigger.right - panelWidth;
+      let top = trigger.bottom + 8;
+
+      if (left < margin) left = margin;
+      if (left + panelWidth > window.innerWidth - margin) {
+        left = window.innerWidth - panelWidth - margin;
+      }
+      if (top + panelHeight > window.innerHeight - margin) {
+        top = Math.max(margin, trigger.top - panelHeight - 8);
+      }
+
+      setPanelStyle({
+        position: "fixed",
+        top: `${top}px`,
+        left: `${left}px`,
+        right: "auto",
+        width: `${panelWidth}px`,
+      });
+    };
+
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, studiedLanguages.length, availableToAdd.length]);
 
   const chooseLanguage = async (language: TargetLanguage) => {
     if (!learner || language === activeLanguage) {
@@ -95,7 +140,14 @@ export function LanguageSwitcher() {
         <ChevronDown aria-hidden="true" className={open ? "open" : ""} size={16} />
       </button>
       {open && (
-        <div id={panelId} className="language-panel" role="listbox" aria-label="Idiomas que você estuda">
+        <div
+          ref={panelRef}
+          id={panelId}
+          className="language-panel"
+          style={panelStyle}
+          role="listbox"
+          aria-label="Idiomas que você estuda"
+        >
           <header>
             <strong>Seus idiomas</strong>
             <small>Toque para trocar e continuar no nível certo</small>

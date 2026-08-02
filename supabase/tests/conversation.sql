@@ -275,16 +275,13 @@ begin
 end;
 $$;
 
--- Limite gratuito de três sessões por dia.
+-- Limite gratuito de duas sessões por dia.
 do $$
 declare
   blocked jsonb;
 begin
   perform public.start_conversation_session(
     '30000000-0000-0000-0000-000000000001', 'airport', 'en', 'A2'
-  );
-  perform public.start_conversation_session(
-    '30000000-0000-0000-0000-000000000001', 'restaurant', 'en', 'A2'
   );
 
   blocked := public.start_conversation_session(
@@ -368,7 +365,7 @@ select set_config('request.jwt.claim.sub', '30000000-0000-0000-0000-000000000001
 
 do $$
 begin
-  if (select count(*) from public.conversation_sessions) <> 3 then
+  if (select count(*) from public.conversation_sessions) <> 2 then
     raise exception 'RLS failure: owner cannot read exactly their own sessions';
   end if;
   if (select count(*) from public.session_summaries) <> 1 then

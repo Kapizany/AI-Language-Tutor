@@ -19,6 +19,7 @@ from app.services.billing import (
     BillingCredentialMismatchError,
     BillingNotConfiguredError,
     BillingRateLimitError,
+    BillingSellerIsBuyerError,
     BillingServiceError,
     parse_mercadopago_webhook_payload,
 )
@@ -80,6 +81,23 @@ def _raise_billing_http_error(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Você já possui uma assinatura Premium ativa.",
+        ) from exc
+    if isinstance(exc, BillingSellerIsBuyerError):
+        logger.info(
+            "Billing rejected because payer email matches Mercado Pago seller",
+            extra={
+                "operation": operation,
+                "provider": "mercadopago",
+                "billing_cycle": billing_cycle,
+                "reason": "seller_is_buyer",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Não é possível assinar com o mesmo e-mail da conta vendedora do Mercado Pago. "
+                "Entre com outra conta Lume (e-mail de comprador) e tente novamente."
+            ),
         ) from exc
     if isinstance(exc, BillingRateLimitError):
         logger.warning(

@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.services.billing import (
     MERCADOPAGO_TEST_PAYER_EMAIL,
     BillingCredentialMismatchError,
+    BillingSellerIsBuyerError,
     BillingService,
     is_mercadopago_simulation_webhook,
     parse_mercadopago_webhook_payload,
@@ -104,6 +105,37 @@ async def test_handle_notification_acknowledges_simulation_without_mercado_pago_
             "simulation": True,
             "reason": "simulation_acknowledged",
         }
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_rejects_when_payer_email_matches_collector() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            mercadopago_billing_enabled=True,
+            mercadopago_access_token="APP_USR-production-token",
+            mercadopago_public_key="APP_USR-public-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+            mercadopago_mock_checkout=False,
+        )
+    )
+    await service.mp.aclose()
+    service.mp = httpx.AsyncClient(
+        base_url="https://api.mercadopago.com",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                request=request,
+                json={"email": "seller@example.com"},
+            )
+        ),
+    )
+    try:
+        with pytest.raises(BillingSellerIsBuyerError):
+            await service._assert_payer_is_not_collector("seller@example.com")
     finally:
         await service.close()
 

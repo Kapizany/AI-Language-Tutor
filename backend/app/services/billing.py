@@ -46,6 +46,10 @@ class BillingCredentialMismatchError(BillingNotConfiguredError):
     pass
 
 
+class BillingSellerIsBuyerError(BillingServiceError):
+    pass
+
+
 class BillingRateLimitError(BillingServiceError):
     def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
         super().__init__(message)
@@ -174,6 +178,27 @@ class BillingService:
     @staticmethod
     def _subscription_start_date() -> str:
         return (datetime.now(UTC) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    async def _collector_email(self) -> str | None:
+        try:
+            response = await self.mp.get("/users/me")
+        except httpx.HTTPError:
+            return None
+        if response.status_code >= 400:
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict):
+            return None
+        email = body.get("email")
+        return str(email).strip().lower() if email else None
+
+    async def _assert_payer_is_not_collector(self, payer_email: str) -> None:
+        collector_email = await self._collector_email()
+        if collector_email and collector_email == payer_email.strip().lower():
+            raise BillingSellerIsBuyerError("Payer email matches the Mercado Pago seller account")
 
     async def close(self) -> None:
         await self.db.aclose()
@@ -331,6 +356,12 @@ class BillingService:
         if not payer_email:
             await self._release_checkout_attempt(user_id)
             raise BillingServiceError("Authenticated user email is required for subscription")
+
+        try:
+            await self._assert_payer_is_not_collector(payer_email)
+        except BillingSellerIsBuyerError:
+            await self._release_checkout_attempt(user_id)
+            raise
 
         back_url = self._preapproval_back_url()
         payload: dict[str, Any] = {

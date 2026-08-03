@@ -207,4 +207,76 @@ begin
 end;
 $$;
 
+-- SUBSCRIPTION_UPDATED/ACTIVE equivalent ("recorded") must not grant Premium.
+do $$
+declare
+  result jsonb;
+  plan_id text;
+begin
+  update public.user_subscriptions
+  set plan_id = 'free', status = 'active', ends_at = null, external_subscription_id = 'sub-recorded'
+  where user_id = '21000000-0000-0000-0000-000000000001'::uuid;
+
+  result := public.sync_billing_subscription(
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'sub-recorded'::text,
+    'cus-1'::text,
+    'recorded'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'asaas'::text,
+    'card'::text
+  );
+  if coalesce(result ->> 'reason', '') <> 'recorded' then
+    raise exception 'Billing failure: recorded status should not mutate plan';
+  end if;
+
+  plan_id := public.resolve_user_plan('21000000-0000-0000-0000-000000000001'::uuid);
+  if plan_id <> 'free' then
+    raise exception 'Billing failure: recorded status granted premium';
+  end if;
+end;
+$$;
+
+-- Overdue without authorized checkout keeps/reverts to free.
+do $$
+declare
+  result jsonb;
+  plan_id text;
+begin
+  perform public.create_billing_checkout(
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'monthly'::text,
+    'pay-overdue'::text,
+    'pix_automatic'::text,
+    'asaas'::text
+  );
+
+  update public.user_subscriptions
+  set plan_id = 'premium',
+      status = 'active',
+      external_subscription_id = 'pay-overdue'
+  where user_id = '21000000-0000-0000-0000-000000000001'::uuid;
+
+  result := public.sync_billing_subscription(
+    '21000000-0000-0000-0000-000000000001'::uuid,
+    'pay-overdue'::text,
+    'cus-1'::text,
+    'overdue'::text,
+    'monthly'::text,
+    null::timestamptz,
+    'asaas'::text,
+    'pix_automatic'::text
+  );
+  if coalesce(result ->> 'updated', 'false') <> 'true' then
+    raise exception 'Billing failure: overdue sync failed';
+  end if;
+
+  plan_id := public.resolve_user_plan('21000000-0000-0000-0000-000000000001'::uuid);
+  if plan_id <> 'free' then
+    raise exception 'Billing failure: overdue should revoke premature premium';
+  end if;
+end;
+$$;
+
 rollback;

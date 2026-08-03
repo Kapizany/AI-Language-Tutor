@@ -205,6 +205,16 @@ h1, h2, h3, .brand { font-family: var(--font-manrope), Manrope, sans-serif; }
 .billing-account-summary article{padding:12px;border:1px solid var(--line);border-radius:12px;background:white}
 .billing-account-summary span{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
 .billing-account-summary strong{font-size:14px;color:var(--ink)}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.billing-account-skeleton{display:grid;gap:18px}
+.billing-skeleton-card{display:grid;gap:10px}
+.billing-skeleton-block{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;background:white}
+.billing-skeleton-title{height:14px;width:42%}
+.billing-skeleton-button{height:40px;width:100%;max-width:220px}
+.billing-skeleton-row-title{height:14px;width:48%}
+.billing-skeleton-badge{height:18px;width:72px;border-radius:999px}
+.billing-skeleton-meta{height:10px;width:64px}
+.billing-skeleton-meta.wide{width:120px}
 .billing-history-section h4{margin:0 0 10px;font-size:15px}
 .billing-history-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
 .billing-history-list li{padding:12px;border:1px solid var(--line);border-radius:12px;background:white}

@@ -62,21 +62,73 @@ function paymentMethodLabel(method: string | null | undefined) {
   return method || "—";
 }
 
+function BillingAccountSkeleton() {
+  return (
+    <div className="billing-account-skeleton" aria-busy="true" aria-live="polite">
+      <span className="visually-hidden">Carregando pagamentos...</span>
+      <div className="billing-account-summary">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <article key={index} className="billing-skeleton-card">
+            <i className="usage-skeleton-line usage-skeleton-label" />
+            <i className="usage-skeleton-line usage-skeleton-value" />
+          </article>
+        ))}
+      </div>
+      <div className="billing-skeleton-block">
+        <i className="usage-skeleton-line billing-skeleton-title" />
+        <i className="usage-skeleton-line billing-skeleton-button" />
+      </div>
+      <div className="billing-history-section">
+        <i className="usage-skeleton-line billing-skeleton-title" />
+        <ul className="billing-history-list">
+          {Array.from({ length: 2 }).map((_, index) => (
+            <li key={index} className="billing-skeleton-card">
+              <div className="billing-history-item-main">
+                <i className="usage-skeleton-line billing-skeleton-row-title" />
+                <i className="usage-skeleton-line billing-skeleton-badge" />
+              </div>
+              <div className="billing-history-item-meta">
+                <i className="usage-skeleton-line billing-skeleton-meta" />
+                <i className="usage-skeleton-line billing-skeleton-meta" />
+                <i className="usage-skeleton-line billing-skeleton-meta wide" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="billing-history-section">
+        <i className="usage-skeleton-line billing-skeleton-title" />
+        <ul className="billing-history-list">
+          <li className="billing-skeleton-card">
+            <div className="billing-history-item-main">
+              <i className="usage-skeleton-line billing-skeleton-row-title" />
+            </div>
+            <div className="billing-history-item-meta">
+              <i className="usage-skeleton-line billing-skeleton-meta wide" />
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function BillingAccountPanel({
   session,
   onGoToPricing,
   onSubscriptionChanged,
 }: BillingAccountPanelProps) {
+  const accessToken = session?.access_token;
   const [history, setHistory] = useState<BillingHistory | null>(null);
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(accessToken));
   const [canceling, setCanceling] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [activeResume, setActiveResume] = useState<CheckoutStatus | null>(null);
   const [error, setError] = useState("");
-  const accessToken = session?.access_token;
+  const showSkeleton = Boolean(accessToken) && loading && !history;
 
-  async function reload() {
+  async function reload(options?: { syncEntitlements?: boolean }) {
     if (!accessToken) return;
     setLoading(true);
     setError("");
@@ -87,7 +139,7 @@ export function BillingAccountPanel({
       ]);
       setHistory(historyResult);
       setCheckoutStatus(statusResult);
-      if (onSubscriptionChanged) {
+      if (options?.syncEntitlements && onSubscriptionChanged) {
         await onSubscriptionChanged();
       }
     } catch {
@@ -103,8 +155,6 @@ export function BillingAccountPanel({
     }
     let active = true;
     const load = async () => {
-      setLoading(true);
-      setError("");
       try {
         const [historyResult, statusResult] = await Promise.all([
           loadBillingHistory(accessToken),
@@ -113,9 +163,6 @@ export function BillingAccountPanel({
         if (!active) return;
         setHistory(historyResult);
         setCheckoutStatus(statusResult);
-        if (onSubscriptionChanged) {
-          await onSubscriptionChanged();
-        }
       } catch {
         if (active) {
           setError("Não foi possível carregar pagamentos e assinatura.");
@@ -130,7 +177,9 @@ export function BillingAccountPanel({
     return () => {
       active = false;
     };
-  }, [accessToken, onSubscriptionChanged]);
+    // Load once per session token. Avoid depending on parent callbacks —
+    // unstable props were re-triggering this effect in a tight loop.
+  }, [accessToken]);
 
   const refreshCheckoutStatus = async () => {
     if (!accessToken) return;
@@ -138,7 +187,7 @@ export function BillingAccountPanel({
     setError("");
     try {
       await refreshBillingSubscription(accessToken);
-      await reload();
+      await reload({ syncEntitlements: true });
     } catch {
       setError("Não foi possível atualizar o status agora.");
       setLoading(false);
@@ -152,7 +201,7 @@ export function BillingAccountPanel({
     setError("");
     try {
       await cancelBillingSubscription(accessToken);
-      await reload();
+      await reload({ syncEntitlements: true });
     } catch {
       setError("Não foi possível cancelar a assinatura agora.");
     } finally {
@@ -172,7 +221,7 @@ export function BillingAccountPanel({
       setActiveResume(status);
       setCheckoutStatus(status);
       if (!status.has_pending_checkout) {
-        await reload();
+        await reload({ syncEntitlements: true });
       }
     } catch {
       setError("Não foi possível recuperar este pagamento. Atualize e tente novamente.");
@@ -212,6 +261,9 @@ export function BillingAccountPanel({
   const hasLifecycleDates = Boolean(startedAt || renewsAt || endsAt);
   const canManage =
     subscription?.subscription_source === "asaas" && planId === "premium";
+  const showPendingPanel =
+    !showSkeleton
+    && (activeResume?.has_pending_checkout || checkoutStatus?.has_pending_checkout);
 
   return (
     <section className="billing-account-panel">
@@ -220,7 +272,11 @@ export function BillingAccountPanel({
           <h3>Pagamentos e assinatura</h3>
           <p>Acompanhe cobranças, status e histórico da sua assinatura Premium.</p>
         </div>
-        <Button variant="secondary" disabled={loading} onClick={() => void reload()}>
+        <Button
+          variant="secondary"
+          disabled={loading}
+          onClick={() => void reload({ syncEntitlements: true })}
+        >
           <RefreshCw size={15} aria-hidden="true" />
           {loading ? "Atualizando..." : "Atualizar"}
         </Button>
@@ -232,180 +288,189 @@ export function BillingAccountPanel({
         </div>
       )}
 
-      <div className="billing-account-summary">
-        <article>
-          <span>Plano atual</span>
-          <strong>{planId === "premium" ? "Premium" : "Free"}</strong>
-        </article>
-        <article>
-          <span>Assinatura</span>
-          <strong>
-            {SUBSCRIPTION_STATUS_LABELS[subscriptionStatus] || subscriptionStatus}
-          </strong>
-        </article>
-        <article>
-          <span>Forma de pagamento</span>
-          <strong>{paymentMethodLabel(subscription?.payment_method)}</strong>
-        </article>
-        <article>
-          <span>Ciclo</span>
-          <strong>
-            {subscription?.billing_cycle === "annual"
-              ? "Anual"
-              : subscription?.billing_cycle === "monthly"
-                ? "Mensal"
-                : "—"}
-          </strong>
-        </article>
-      </div>
+      {showSkeleton ? (
+        <BillingAccountSkeleton />
+      ) : (
+        <>
+          <div className="billing-account-summary">
+            <article>
+              <span>Plano atual</span>
+              <strong>{planId === "premium" ? "Premium" : "Free"}</strong>
+            </article>
+            <article>
+              <span>Assinatura</span>
+              <strong>
+                {SUBSCRIPTION_STATUS_LABELS[subscriptionStatus] || subscriptionStatus}
+              </strong>
+            </article>
+            <article>
+              <span>Forma de pagamento</span>
+              <strong>{paymentMethodLabel(subscription?.payment_method)}</strong>
+            </article>
+            <article>
+              <span>Ciclo</span>
+              <strong>
+                {subscription?.billing_cycle === "annual"
+                  ? "Anual"
+                  : subscription?.billing_cycle === "monthly"
+                    ? "Mensal"
+                    : "—"}
+              </strong>
+            </article>
+          </div>
 
-      {hasLifecycleDates && (
-        <div className="billing-lifecycle">
-          {startedAt && (
-            <p>
-              <strong>Início</strong>
-              {formatDate(startedAt)}
-            </p>
+          {hasLifecycleDates && (
+            <div className="billing-lifecycle">
+              {startedAt && (
+                <p>
+                  <strong>Início</strong>
+                  {formatDate(startedAt)}
+                </p>
+              )}
+              {endsAt ? (
+                <p>
+                  <strong>Término</strong>
+                  {formatDate(endsAt)}
+                </p>
+              ) : renewsAt ? (
+                <p>
+                  <strong>Próxima renovação</strong>
+                  {formatDate(renewsAt)}
+                </p>
+              ) : null}
+            </div>
           )}
-          {endsAt ? (
-            <p>
-              <strong>Término</strong>
-              {formatDate(endsAt)}
-            </p>
-          ) : renewsAt ? (
-            <p>
-              <strong>Próxima renovação</strong>
-              {formatDate(renewsAt)}
-            </p>
-          ) : null}
-        </div>
-      )}
 
-      {(activeResume?.has_pending_checkout || checkoutStatus?.has_pending_checkout) && (
-        <PendingCheckoutPanel
-          status={activeResume?.has_pending_checkout ? activeResume : checkoutStatus!}
-          loading={loading || Boolean(resumingId)}
-          onRefresh={async () => {
-            if (activeResume?.external_subscription_id && accessToken) {
-              const status = await resumePendingCheckout(
-                accessToken,
-                activeResume.external_subscription_id,
-              );
-              setActiveResume(status);
-              setCheckoutStatus(status);
-              if (!status.has_pending_checkout) {
-                await reload();
-              }
-              return;
-            }
-            await refreshCheckoutStatus();
-          }}
-          onContinueCheckout={
-            (activeResume?.payment_method || checkoutStatus?.payment_method) === "pix_automatic"
-              ? () => {
-                  const pending = history?.pending_checkout;
-                  if (pending) void resumeCheckout(pending);
-                  else onGoToPricing?.();
+          {showPendingPanel && (
+            <PendingCheckoutPanel
+              status={activeResume?.has_pending_checkout ? activeResume : checkoutStatus!}
+              loading={loading || Boolean(resumingId)}
+              onRefresh={async () => {
+                if (activeResume?.external_subscription_id && accessToken) {
+                  const status = await resumePendingCheckout(
+                    accessToken,
+                    activeResume.external_subscription_id,
+                  );
+                  setActiveResume(status);
+                  setCheckoutStatus(status);
+                  if (!status.has_pending_checkout) {
+                    await reload({ syncEntitlements: true });
+                  }
+                  return;
                 }
-              : onGoToPricing
-          }
-          onRetryPayment={() => retryCheckout(history?.pending_checkout)}
-        />
-      )}
+                await refreshCheckoutStatus();
+              }}
+              onContinueCheckout={
+                (activeResume?.payment_method || checkoutStatus?.payment_method) === "pix_automatic"
+                  ? () => {
+                      const pending = history?.pending_checkout;
+                      if (pending) void resumeCheckout(pending);
+                      else onGoToPricing?.();
+                    }
+                  : onGoToPricing
+              }
+              onRetryPayment={() => retryCheckout(history?.pending_checkout)}
+            />
+          )}
 
-      {canManage && subscriptionStatus !== "canceled" && (
-        <div className="billing-management">
-          <Button variant="danger" disabled={canceling} onClick={() => void cancelSubscription()}>
-            {canceling ? "Cancelando..." : "Cancelar assinatura"}
-          </Button>
-          <p className="usage-note">O acesso continua até o fim do período pago.</p>
-        </div>
-      )}
+          {canManage && subscriptionStatus !== "canceled" && (
+            <div className="billing-management">
+              <Button variant="danger" disabled={canceling} onClick={() => void cancelSubscription()}>
+                {canceling ? "Cancelando..." : "Cancelar assinatura"}
+              </Button>
+              <p className="usage-note">O acesso continua até o fim do período pago.</p>
+            </div>
+          )}
 
-      <div className="billing-history-section">
-        <h4>Histórico de cobranças</h4>
-        {history?.checkouts?.length ? (
-          <ul className="billing-history-list">
-            {history.checkouts.map((checkout) => (
-              <li key={String(checkout.id ?? checkout.external_subscription_id)}>
-                <div className="billing-history-item-main">
-                  <strong>
-                    Premium {checkout.billing_cycle === "annual" ? "Anual" : "Mensal"}
-                  </strong>
-                  <span className={`billing-history-badge billing-history-badge-${checkout.status}`}>
-                    {CHECKOUT_STATUS_LABELS[String(checkout.status)] || checkout.status}
-                  </span>
-                </div>
-                <div className="billing-history-item-meta">
-                  <span>{paymentMethodLabel(checkout.payment_method)}</span>
-                  <span>{checkout.amount != null ? formatBrl(checkout.amount) : "—"}</span>
-                  <span>{formatDate(checkout.created_at)}</span>
-                </div>
-                {(checkout.can_resume || checkout.can_retry) && checkout.external_subscription_id && (
-                  <div className="billing-history-item-actions">
-                    {checkout.can_resume && (
-                      <Button
-                        full
-                        disabled={loading || resumingId === checkout.external_subscription_id}
-                        onClick={() => void resumeCheckout(checkout)}
-                      >
-                        {resumingId === checkout.external_subscription_id
-                          ? "Abrindo PIX..."
-                          : "Finalizar pagamento"}
-                      </Button>
+          <div className="billing-history-section">
+            <h4>Histórico de cobranças</h4>
+            {history?.checkouts?.length ? (
+              <ul className="billing-history-list">
+                {history.checkouts.map((checkout) => (
+                  <li key={String(checkout.id ?? checkout.external_subscription_id)}>
+                    <div className="billing-history-item-main">
+                      <strong>
+                        Premium {checkout.billing_cycle === "annual" ? "Anual" : "Mensal"}
+                      </strong>
+                      <span className={`billing-history-badge billing-history-badge-${checkout.status}`}>
+                        {CHECKOUT_STATUS_LABELS[String(checkout.status)] || checkout.status}
+                      </span>
+                    </div>
+                    <div className="billing-history-item-meta">
+                      <span>{paymentMethodLabel(checkout.payment_method)}</span>
+                      <span>{checkout.amount != null ? formatBrl(checkout.amount) : "—"}</span>
+                      <span>{formatDate(checkout.created_at)}</span>
+                    </div>
+                    {(checkout.can_resume || checkout.can_retry)
+                      && checkout.external_subscription_id && (
+                      <div className="billing-history-item-actions">
+                        {checkout.can_resume && (
+                          <Button
+                            full
+                            disabled={loading || resumingId === checkout.external_subscription_id}
+                            onClick={() => void resumeCheckout(checkout)}
+                          >
+                            {resumingId === checkout.external_subscription_id
+                              ? "Abrindo PIX..."
+                              : "Finalizar pagamento"}
+                          </Button>
+                        )}
+                        {checkout.can_retry && (
+                          <Button
+                            variant={checkout.can_resume ? "secondary" : "primary"}
+                            full
+                            disabled={loading || Boolean(resumingId)}
+                            onClick={() => void retryCheckout(checkout)}
+                          >
+                            {resumingId === checkout.external_subscription_id
+                              ? "Cancelando..."
+                              : "Tentar novamente"}
+                          </Button>
+                        )}
+                      </div>
                     )}
-                    {checkout.can_retry && (
-                      <Button
-                        variant={checkout.can_resume ? "secondary" : "primary"}
-                        full
-                        disabled={loading || Boolean(resumingId)}
-                        onClick={() => void retryCheckout(checkout)}
-                      >
-                        {resumingId === checkout.external_subscription_id
-                          ? "Cancelando..."
-                          : "Tentar novamente"}
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="usage-note">Nenhuma cobrança registrada ainda.</p>
-        )}
-      </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="usage-note">Nenhuma cobrança registrada ainda.</p>
+            )}
+          </div>
 
-      <div className="billing-history-section">
-        <h4>Eventos recentes</h4>
-        {history?.events?.length ? (
-          <ul className="billing-history-list billing-events-list">
-            {history.events.map((eventItem) => (
-              <li key={String(eventItem.id ?? eventItem.event_key)}>
-                <div className="billing-history-item-main">
-                  <strong>
-                    {EVENT_TYPE_LABELS[String(eventItem.event_type)] || eventItem.event_type}
-                  </strong>
-                  {eventItem.payment_status && (
-                    <span className="billing-history-badge">{eventItem.payment_status}</span>
-                  )}
-                </div>
-                <div className="billing-history-item-meta">
-                  <span>{formatDate(eventItem.processed_at)}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="usage-note">Os eventos do Asaas aparecerão aqui após confirmações e alterações.</p>
-        )}
-      </div>
+          <div className="billing-history-section">
+            <h4>Eventos recentes</h4>
+            {history?.events?.length ? (
+              <ul className="billing-history-list billing-events-list">
+                {history.events.map((eventItem) => (
+                  <li key={String(eventItem.id ?? eventItem.event_key)}>
+                    <div className="billing-history-item-main">
+                      <strong>
+                        {EVENT_TYPE_LABELS[String(eventItem.event_type)] || eventItem.event_type}
+                      </strong>
+                      {eventItem.payment_status && (
+                        <span className="billing-history-badge">{eventItem.payment_status}</span>
+                      )}
+                    </div>
+                    <div className="billing-history-item-meta">
+                      <span>{formatDate(eventItem.processed_at)}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="usage-note">
+                Os eventos do Asaas aparecerão aqui após confirmações e alterações.
+              </p>
+            )}
+          </div>
 
-      {planId === "free" && onGoToPricing && !checkoutStatus?.has_pending_checkout && (
-        <Button full onClick={onGoToPricing}>
-          <CreditCard size={15} aria-hidden="true" />
-          Assinar Premium
-        </Button>
+          {planId === "free" && onGoToPricing && !checkoutStatus?.has_pending_checkout && (
+            <Button full onClick={onGoToPricing}>
+              <CreditCard size={15} aria-hidden="true" />
+              Assinar Premium
+            </Button>
+          )}
+        </>
       )}
     </section>
   );

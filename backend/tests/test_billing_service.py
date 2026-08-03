@@ -679,6 +679,101 @@ async def test_handle_webhook_subscription_updated_active_is_recorded_only() -> 
 
 
 @pytest.mark.asyncio
+async def test_billing_history_cancels_stale_pending_when_premium_active() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    patched: list[str] = []
+    deleted: list[str] = []
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user_subscriptions"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "plan_id": "premium",
+                        "status": "active",
+                        "billing_cycle": "annual",
+                        "subscription_source": "asaas",
+                        "payment_method": "card",
+                        "external_subscription_id": "sub_active",
+                    }
+                ],
+            )
+        if request.method == "GET" and request.url.path.endswith("/billing_checkouts"):
+            if "status=eq.pending" in str(request.url):
+                return httpx.Response(
+                    200,
+                    request=request,
+                    json=[
+                        {
+                            "id": 11,
+                            "payment_method": "pix_automatic",
+                            "external_subscription_id": "pay_orphan",
+                        }
+                    ],
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "id": 11,
+                        "billing_cycle": "monthly",
+                        "payment_method": "pix_automatic",
+                        "status": "cancelled",
+                        "external_subscription_id": "pay_orphan",
+                        "created_at": "2026-08-02T12:00:00Z",
+                        "updated_at": "2026-08-03T12:00:00Z",
+                    }
+                ],
+            )
+        if request.method == "PATCH" and request.url.path.endswith("/billing_checkouts"):
+            patched.append(request.content.decode())
+            return httpx.Response(204, request=request)
+        if request.url.path.endswith("/billing_events"):
+            return httpx.Response(200, request=request, json=[])
+        return httpx.Response(500, request=request)
+
+    def asaas_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE" and request.url.path.endswith("/payments/pay_orphan"):
+            deleted.append(request.url.path)
+            return httpx.Response(200, request=request, json={"deleted": True})
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(asaas_handler),
+    )
+    try:
+        result = await service.get_billing_history(user_id=user_id)
+        assert deleted == ["/v3/payments/pay_orphan"]
+        assert patched
+        assert "cancelled" in patched[0]
+        assert result["checkouts"][0]["status"] == "cancelled"
+        assert result["checkouts"][0]["can_resume"] is False
+        assert result["checkouts"][0]["can_retry"] is False
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_billing_history_syncs_cancelled_payments_from_asaas() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(

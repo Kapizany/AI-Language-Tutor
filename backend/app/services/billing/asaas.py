@@ -1013,6 +1013,15 @@ class BillingService:
                 billing_cycle=str(billing_cycle or "monthly"),
                 payment_method=str(payment_method or "card"),
             )
+        if (
+            isinstance(result, dict)
+            and result.get("subscription_status") == "active"
+            and provider_status in {"confirmed", "received"}
+        ):
+            await self._cancel_stale_pending_checkouts(
+                user_id=user_id,
+                keep_external_id=external_subscription_id,
+            )
         return result if isinstance(result, dict) else {"updated": False}
 
     def verify_webhook_token(self, token: str | None) -> bool:
@@ -1154,11 +1163,22 @@ class BillingService:
         """Return local checkout status based on live Asaas resource, or None if unknown."""
         if not external_id or external_id.startswith("mock:"):
             return None
+
+        is_pix = payment_method == "pix_automatic" or external_id.startswith("pay_")
+        is_card = payment_method == "card" or external_id.startswith("sub_")
+        # Legacy Mercado Pago / foreign IDs cannot be resolved on Asaas.
+        if not is_pix and not is_card:
+            return "cancelled"
+
         try:
-            if payment_method == "pix_automatic" or external_id.startswith("pay_"):
+            if is_pix:
                 payment = await self._asaas_request("GET", f"/payments/{external_id}")
+                if payment.get("deleted") is True:
+                    return "cancelled"
                 return self._checkout_status_from_asaas_payment(str(payment.get("status") or ""))
             subscription = await self._asaas_request("GET", f"/subscriptions/{external_id}")
+            if subscription.get("deleted") is True:
+                return "cancelled"
             sub_status = str(subscription.get("status") or "").upper()
             if sub_status in {"INACTIVE", "EXPIRED", "DELETED"}:
                 return "cancelled"
@@ -1173,16 +1193,83 @@ class BillingService:
                 return "pending"
             return "failed"
         except BillingProviderError as exc:
-            # Deleted resources commonly return 404 on Asaas.
-            if exc.status_code == 404:
+            # Missing/invalid resources should not keep local checkouts stuck as pending.
+            if exc.status_code in {400, 404}:
                 return "cancelled"
             return None
         except BillingServiceError:
             return None
 
+    async def _cancel_stale_pending_checkouts(
+        self,
+        *,
+        user_id: UUID,
+        keep_external_id: str | None = None,
+    ) -> None:
+        """Cancel pending checkouts that are not the active Premium charge."""
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "status": "eq.pending",
+                    "select": "id,payment_method,external_subscription_id",
+                    "order": "created_at.desc",
+                    "limit": "20",
+                },
+            )
+        except httpx.HTTPError:
+            return
+        if response.status_code >= 400:
+            return
+        rows = response.json()
+        if not isinstance(rows, list):
+            return
+
+        keep_id = (keep_external_id or "").strip()
+        for row in rows:
+            if not isinstance(row, dict) or row.get("id") is None:
+                continue
+            external_id = str(row.get("external_subscription_id") or "")
+            if keep_id and external_id == keep_id:
+                continue
+            payment_method = str(row.get("payment_method") or "card")
+            if self.enabled and external_id:
+                await self._cancel_asaas_checkout_resource(
+                    external_id=external_id,
+                    payment_method=payment_method,
+                )
+            try:
+                await self._update_checkout_status(checkout_id=row["id"], status="cancelled")
+            except BillingServiceError:
+                logger.exception(
+                    "Could not cancel stale pending checkout",
+                    extra={
+                        "operation": "checkout_stale_cancel",
+                        "provider": PROVIDER,
+                        "checkout_id": row.get("id"),
+                    },
+                )
+
     async def _sync_pending_checkouts(self, *, user_id: UUID) -> None:
         if not self.enabled:
             return
+
+        subscription = await self._load_user_subscription(user_id=user_id)
+        is_premium_active = bool(
+            subscription
+            and str(subscription.get("plan_id") or "") == "premium"
+            and str(subscription.get("status") or "active") == "active"
+        )
+        if is_premium_active:
+            await self._cancel_stale_pending_checkouts(
+                user_id=user_id,
+                keep_external_id=str(subscription.get("external_subscription_id") or "")
+                if subscription
+                else None,
+            )
+            return
+
         try:
             response = await self.db.get(
                 "/billing_checkouts",
@@ -1324,7 +1411,7 @@ class BillingService:
                 await self._asaas_request("DELETE", f"/subscriptions/{external_id}")
         except BillingProviderError as exc:
             # Already deleted/cancelled on Asaas is fine for local abandon.
-            if exc.status_code != 404:
+            if exc.status_code not in {400, 404}:
                 logger.warning(
                     "Could not cancel Asaas checkout resource during abandon",
                     extra={
@@ -1449,6 +1536,11 @@ class BillingService:
 
         checkout_rows = checkout_response.json()
         event_rows = events_response.json()
+        is_premium_active = bool(
+            subscription
+            and str(subscription.get("plan_id") or "") == "premium"
+            and str(subscription.get("status") or "active") == "active"
+        )
         checkouts: list[dict[str, Any]] = []
         if isinstance(checkout_rows, list):
             for row in checkout_rows:
@@ -1459,6 +1551,11 @@ class BillingService:
                 pricing = PRICING[cycle_key]
                 status = str(row.get("status") or "")
                 payment_method = row.get("payment_method")
+                can_act_on_pending = (
+                    status == "pending"
+                    and bool(row.get("external_subscription_id"))
+                    and not is_premium_active
+                )
                 checkouts.append(
                     {
                         "id": row.get("id"),
@@ -1470,11 +1567,8 @@ class BillingService:
                         "currency": "BRL",
                         "created_at": row.get("created_at"),
                         "updated_at": row.get("updated_at"),
-                        "can_resume": status == "pending"
-                        and payment_method == "pix_automatic"
-                        and bool(row.get("external_subscription_id")),
-                        "can_retry": status == "pending"
-                        and bool(row.get("external_subscription_id")),
+                        "can_resume": can_act_on_pending and payment_method == "pix_automatic",
+                        "can_retry": can_act_on_pending,
                     }
                 )
 

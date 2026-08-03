@@ -838,6 +838,52 @@ class BillingService:
             return None
         return rows[0]
 
+    async def _has_authorized_checkout(
+        self,
+        *,
+        user_id: UUID,
+        external_subscription_id: str | None = None,
+    ) -> bool:
+        params: dict[str, str] = {
+            "user_id": f"eq.{user_id}",
+            "status": "eq.authorized",
+            "select": "id",
+            "limit": "1",
+        }
+        if external_subscription_id:
+            params["external_subscription_id"] = f"eq.{external_subscription_id}"
+        try:
+            response = await self.db.get("/billing_checkouts", params=params)
+        except httpx.HTTPError:
+            return False
+        if response.status_code >= 400:
+            return False
+        rows = response.json()
+        return isinstance(rows, list) and bool(rows)
+
+    async def _load_latest_authorized_checkout(self, *, user_id: UUID) -> dict[str, Any] | None:
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "status": "eq.authorized",
+                    "select": (
+                        "id,billing_cycle,payment_method,external_subscription_id,created_at"
+                    ),
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError:
+            return None
+        if response.status_code >= 400:
+            return None
+        rows = response.json()
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return None
+        return rows[0]
+
     async def cancel_subscription(self, *, user_id: UUID) -> dict[str, Any]:
         if not self.enabled:
             raise BillingNotConfiguredError("Asaas billing is not configured")
@@ -853,22 +899,38 @@ class BillingService:
             raise BillingSubscriptionNotFoundError("Subscription was not found")
 
         payment_method = str(subscription.get("payment_method") or "card")
-        if payment_method == "pix_automatic":
-            await self._asaas_request("DELETE", f"/payments/{external_id}")
-        else:
-            await self._asaas_request("DELETE", f"/subscriptions/{external_id}")
+        # Missing Asaas resources must not block local cancellation.
+        await self._cancel_asaas_checkout_resource(
+            external_id=external_id,
+            payment_method=payment_method,
+        )
 
-        grace_end = datetime.now(tz=UTC) + timedelta(days=30)
+        has_paid = await self._has_authorized_checkout(
+            user_id=user_id,
+            external_subscription_id=external_id,
+        ) or await self._has_authorized_checkout(user_id=user_id)
+        if has_paid:
+            grace_end = datetime.now(tz=UTC) + timedelta(days=30)
+            provider_status = "canceled"
+            ends_at = grace_end
+            event_key = f"cancel:{external_id}"
+        else:
+            # Never-confirmed Premium (or overwritten by a pending checkout) → revoke now.
+            grace_end = datetime.now(tz=UTC)
+            provider_status = "refunded"
+            ends_at = grace_end
+            event_key = f"revoke-unpaid:{external_id}"
+
         result = await self._process_provider_status(
             user_id=user_id,
             external_subscription_id=external_id,
             external_customer_id=None,
-            provider_status="canceled",
+            provider_status=provider_status,
             billing_cycle=subscription.get("billing_cycle"),
             payment_method=payment_method,
-            payload={"ends_at": grace_end.isoformat()},
-            event_key=f"cancel:{external_id}",
-            ends_at=grace_end,
+            payload={"ends_at": ends_at.isoformat(), "has_paid_checkout": has_paid},
+            event_key=event_key,
+            ends_at=ends_at,
         )
         return {
             "subscription_status": str(result.get("subscription_status") or "canceled"),
@@ -1251,9 +1313,113 @@ class BillingService:
                     },
                 )
 
+    async def _restore_subscription_from_authorized_checkout(
+        self,
+        *,
+        user_id: UUID,
+        checkout: dict[str, Any],
+    ) -> None:
+        external_id = str(checkout.get("external_subscription_id") or "")
+        if not external_id:
+            return
+        try:
+            response = await self.db.patch(
+                "/user_subscriptions",
+                params={"user_id": f"eq.{user_id}"},
+                json={
+                    "external_subscription_id": external_id,
+                    "payment_method": checkout.get("payment_method"),
+                    "billing_cycle": checkout.get("billing_cycle"),
+                    "subscription_source": PROVIDER,
+                    "updated_at": datetime.now(tz=UTC).isoformat(),
+                },
+            )
+        except httpx.HTTPError:
+            logger.exception(
+                "Could not restore subscription from authorized checkout",
+                extra={"operation": "subscription_restore", "provider": PROVIDER},
+            )
+            return
+        if response.status_code >= 400:
+            logger.warning(
+                "Could not restore subscription from authorized checkout",
+                extra={
+                    "operation": "subscription_restore",
+                    "provider": PROVIDER,
+                    "status_code": response.status_code,
+                },
+            )
+
+    async def _reconcile_active_premium(self, *, user_id: UUID) -> None:
+        """Fix Premium rows pointing at missing/unpaid Asaas resources."""
+        subscription = await self._load_user_subscription(user_id=user_id)
+        if not subscription:
+            return
+        if str(subscription.get("plan_id") or "") != "premium":
+            return
+        if str(subscription.get("status") or "active") != "active":
+            return
+        if str(subscription.get("subscription_source") or "") != PROVIDER:
+            return
+
+        external_id = str(subscription.get("external_subscription_id") or "")
+        payment_method = str(subscription.get("payment_method") or "card")
+        if not external_id:
+            return
+
+        live_status = await self._lookup_asaas_checkout_status(
+            external_id=external_id,
+            payment_method=payment_method,
+        )
+        if live_status in {None, "pending"}:
+            return
+
+        authorized = await self._load_latest_authorized_checkout(user_id=user_id)
+        authorized_external = str((authorized or {}).get("external_subscription_id") or "")
+        if authorized and authorized_external and authorized_external != external_id:
+            await self._restore_subscription_from_authorized_checkout(
+                user_id=user_id,
+                checkout=authorized,
+            )
+            return
+
+        if authorized and authorized_external == external_id:
+            # Paid charge exists; keep Premium and mark canceled with grace if provider gone.
+            if live_status in {"cancelled", "failed"}:
+                grace_end = datetime.now(tz=UTC) + timedelta(days=30)
+                await self._process_provider_status(
+                    user_id=user_id,
+                    external_subscription_id=external_id,
+                    external_customer_id=None,
+                    provider_status="canceled",
+                    billing_cycle=subscription.get("billing_cycle"),
+                    payment_method=payment_method,
+                    payload={"ends_at": grace_end.isoformat(), "reason": "provider_missing"},
+                    event_key=(
+                        f"reconcile-cancel:{external_id}:{datetime.now(tz=UTC).date().isoformat()}"
+                    ),
+                    ends_at=grace_end,
+                )
+            return
+
+        # No authorized checkout → ghost Premium from pending overwrite or failed charge.
+        await self._process_provider_status(
+            user_id=user_id,
+            external_subscription_id=external_id,
+            external_customer_id=None,
+            provider_status="refunded",
+            billing_cycle=subscription.get("billing_cycle"),
+            payment_method=payment_method,
+            payload={"reason": "reconcile_unpaid_premium"},
+            event_key=(f"reconcile-revoke:{external_id}:{datetime.now(tz=UTC).date().isoformat()}"),
+            ends_at=datetime.now(tz=UTC),
+        )
+
     async def _sync_pending_checkouts(self, *, user_id: UUID) -> None:
         if not self.enabled:
             return
+
+        await self._reconcile_active_premium(user_id=user_id)
 
         subscription = await self._load_user_subscription(user_id=user_id)
         is_premium_active = bool(

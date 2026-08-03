@@ -679,6 +679,139 @@ async def test_handle_webhook_subscription_updated_active_is_recorded_only() -> 
 
 
 @pytest.mark.asyncio
+async def test_cancel_subscription_revokes_when_asaas_resource_missing_and_unpaid() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    rpc_payloads: list[dict[str, object]] = []
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user_subscriptions"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "plan_id": "premium",
+                        "status": "active",
+                        "billing_cycle": "monthly",
+                        "subscription_source": "asaas",
+                        "payment_method": "pix_automatic",
+                        "external_subscription_id": "pay_test",
+                    }
+                ],
+            )
+        if request.url.path.endswith("/billing_checkouts"):
+            return httpx.Response(200, request=request, json=[])
+        if request.url.path.endswith("/rpc/process_billing_event"):
+            payload = json.loads(request.content.decode())
+            rpc_payloads.append(payload)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "updated": True,
+                    "plan_id": "free",
+                    "subscription_status": "canceled",
+                    "ends_at": "2026-08-03T12:00:00+00:00",
+                },
+            )
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(404, request=request, text="not found")
+        ),
+    )
+    try:
+        result = await service.cancel_subscription(user_id=user_id)
+        assert result["subscription_status"] == "canceled"
+        assert rpc_payloads
+        assert rpc_payloads[0]["p_mp_status"] == "refunded"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_billing_history_reconciles_ghost_premium_without_authorized_checkout() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    rpc_calls = 0
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal rpc_calls
+        if request.url.path.endswith("/user_subscriptions"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "plan_id": "premium",
+                        "status": "active",
+                        "billing_cycle": "monthly",
+                        "subscription_source": "asaas",
+                        "payment_method": "pix_automatic",
+                        "external_subscription_id": "pay_ghost",
+                    }
+                ],
+            )
+        if request.url.path.endswith("/billing_checkouts"):
+            return httpx.Response(200, request=request, json=[])
+        if request.url.path.endswith("/billing_events"):
+            return httpx.Response(200, request=request, json=[])
+        if request.url.path.endswith("/rpc/process_billing_event"):
+            rpc_calls += 1
+            return httpx.Response(
+                200,
+                request=request,
+                json={"updated": True, "plan_id": "free", "subscription_status": "canceled"},
+            )
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(404, request=request, text="not found")
+        ),
+    )
+    try:
+        await service.get_billing_history(user_id=user_id)
+        assert rpc_calls >= 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_billing_history_cancels_stale_pending_when_premium_active() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(

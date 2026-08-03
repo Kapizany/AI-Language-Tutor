@@ -141,6 +141,14 @@ const screens: Array<{ id: ScreenId; label: string; icon: IconType; group: strin
   { id: "progress", label: "Progresso", icon: BarChart3, group: "Progresso" },
   { id: "profile", label: "Perfil", icon: Settings, group: "Conta" },
   { id: "privacy", label: "Dados e privacidade", icon: ShieldCheck, group: "Conta" },
+  { id: "pricing", label: "Planos", icon: CreditCard, group: "Conta" },
+  {
+    id: "billing-success",
+    label: "Pagamento confirmado",
+    icon: CheckCircle2,
+    group: "Conta",
+  },
+  { id: "billing-cancel", label: "Pagamento cancelado", icon: X, group: "Conta" },
   { id: "admin", label: "Admin", icon: ShieldCheck, group: "Operação" },
 ];
 

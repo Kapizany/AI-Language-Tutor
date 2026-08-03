@@ -81,23 +81,45 @@ begin
     from public.grammar_topics topic
     left join public.grammar_exercises exercise
       on exercise.topic_id = topic.id and exercise.is_published
-    where topic.id like '%-grammar-extra-%'
-    group by topic.id
-    having count(exercise.id) <> 5
+    where topic.is_published
+    group by topic.id, topic.level
+    having count(exercise.id) <> case topic.level
+      when 'A1' then 5
+      when 'A2' then 6
+      when 'B1' then 8
+      when 'B2' then 10
+    end
   ) then
-    raise exception 'Grammar catalog failure: every extended topic needs five exercises';
+    raise exception 'Grammar catalog failure: expected A1=5, A2=6, B1=8, B2=10 exercises per topic';
   end if;
 
   if exists (
-    select topic.id
-    from public.grammar_topics topic
-    left join public.grammar_exercises exercise
-      on exercise.topic_id = topic.id and exercise.is_published
-    where topic.is_published
-    group by topic.id
-    having count(exercise.id) <> 5
+    select 1
+    from public.grammar_exercises
+    where is_published
+      and (
+        question not like '%___%'
+        or question in (
+          'Choose the correct sentence.',
+          'Elige la frase correcta.',
+          'Choisissez la phrase correcte.',
+          'Scegli la frase corretta.'
+        )
+      )
   ) then
-    raise exception 'Grammar catalog failure: every topic needs five exercises';
+    raise exception 'Grammar catalog failure: exercises must be topic-aligned cloze prompts';
+  end if;
+
+  if exists (
+    select 1
+    from public.grammar_exercises
+    where is_published
+      and (
+        (level in ('A1', 'A2') and jsonb_array_length(options) <> 3)
+        or (level in ('B1', 'B2') and jsonb_array_length(options) <> 4)
+      )
+  ) then
+    raise exception 'Grammar catalog failure: A1/A2 need 3 options and B1/B2 need 4 options';
   end if;
 
   if exists (
@@ -117,19 +139,6 @@ begin
     raise exception 'Advanced quick lesson failure: B1/B2 questions remain literal or trivial';
   end if;
 
-  if exists (
-    select 1
-    from public.grammar_exercises
-    where level in ('B1', 'B2')
-      and question in (
-        'Choose the correct sentence.',
-        'Elige la frase correcta.',
-        'Choisissez la phrase correcte.',
-        'Scegli la frase corretta.'
-      )
-  ) then
-    raise exception 'Advanced grammar failure: B1/B2 exercises still use generic prompts';
-  end if;
 end;
 $$;
 

@@ -1,3 +1,4 @@
+import json
 from uuid import UUID
 
 import httpx
@@ -412,6 +413,17 @@ async def test_handle_webhook_activates_premium_on_payment_confirmed() -> None:
         return httpx.Response(500, request=request)
 
     def asaas_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/payments/pay_777"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "pay_777",
+                    "status": "CONFIRMED",
+                    "customer": "cus_123",
+                    "externalReference": f"{user_id}:monthly:pix_automatic",
+                },
+            )
         if request.url.path.endswith("/customers/cus_123"):
             return httpx.Response(200, request=request, json={"email": "learner@example.test"})
         return httpx.Response(404, request=request)
@@ -439,6 +451,151 @@ async def test_handle_webhook_activates_premium_on_payment_confirmed() -> None:
         )
         assert result["processed"] is True
         assert result["plan_id"] == "premium"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_rejects_unverified_payment_activation() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(lambda request: httpx.Response(500, request=request)),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(
+            lambda request: (
+                httpx.Response(
+                    200,
+                    request=request,
+                    json={"id": "pay_pending", "status": "PENDING"},
+                )
+                if request.url.path.endswith("/payments/pay_pending")
+                else httpx.Response(404, request=request)
+            )
+        ),
+    )
+    try:
+        result = await service.handle_webhook(
+            {
+                "id": "evt_fake",
+                "event": "PAYMENT_CONFIRMED",
+                "payment": {
+                    "id": "pay_pending",
+                    "externalReference": f"{user_id}:monthly:pix_automatic",
+                },
+            }
+        )
+        assert result["processed"] is False
+        assert result["reason"] == "payment_not_confirmed_on_asaas"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_processes_payment_overdue() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(
+            lambda request: (
+                httpx.Response(
+                    200,
+                    request=request,
+                    json={"updated": True, "subscription_status": "pending"},
+                )
+                if request.url.path.endswith("/rpc/process_billing_event")
+                else httpx.Response(500, request=request)
+            )
+        ),
+    )
+    service.asaas = httpx.AsyncClient(base_url="https://api-sandbox.asaas.com/v3")
+    try:
+        result = await service.handle_webhook(
+            {
+                "id": "evt_overdue",
+                "event": "PAYMENT_OVERDUE",
+                "payment": {
+                    "id": "pay_overdue",
+                    "externalReference": f"{user_id}:monthly:pix_automatic",
+                },
+            }
+        )
+        assert result["processed"] is True
+        assert result["event"] == "PAYMENT_OVERDUE"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_subscription_updated_active_is_recorded_only() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    captured: dict[str, object] = {}
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/rpc/process_billing_event"):
+            captured["payload"] = json.loads(request.content.decode())
+            return httpx.Response(
+                200,
+                request=request,
+                json={"updated": True, "reason": "recorded", "subscription_status": "pending"},
+            )
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(base_url="https://api-sandbox.asaas.com/v3")
+    try:
+        result = await service.handle_webhook(
+            {
+                "id": "evt_sub_update",
+                "event": "SUBSCRIPTION_UPDATED",
+                "subscription": {
+                    "id": "sub_123",
+                    "status": "ACTIVE",
+                    "externalReference": f"{user_id}:annual:card",
+                },
+            }
+        )
+        assert result["processed"] is True
+        assert result["event"] == "SUBSCRIPTION_UPDATED"
+        assert captured["payload"]["p_mp_status"] == "recorded"
     finally:
         await service.close()
 

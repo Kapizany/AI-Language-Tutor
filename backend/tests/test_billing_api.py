@@ -215,6 +215,69 @@ async def test_user_can_cancel_asaas_subscription() -> None:
 
 
 @pytest.mark.asyncio
+async def test_billing_history_requires_authentication() -> None:
+    billing = AsyncMock(spec=BillingService)
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/v1/billing/history")
+    app.dependency_overrides.clear()
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_billing_history_returns_checkouts_and_events() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.get_billing_history.return_value = {
+        "subscription": {"plan_id": "premium", "status": "active"},
+        "checkouts": [
+            {
+                "id": 1,
+                "billing_cycle": "monthly",
+                "payment_method": "pix_automatic",
+                "status": "authorized",
+                "amount": 2.0,
+                "currency": "BRL",
+                "created_at": "2026-08-03T10:00:00Z",
+            }
+        ],
+        "events": [
+            {
+                "id": 10,
+                "event_type": "PAYMENT_CONFIRMED",
+                "processed_at": "2026-08-03T10:00:01Z",
+            }
+        ],
+        "pending_checkout": None,
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.get("/api/v1/billing/history")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["checkouts"][0]["status"] == "authorized"
+    assert payload["events"][0]["event_type"] == "PAYMENT_CONFIRMED"
+    billing.get_billing_history.assert_awaited_once_with(user_id=LEARNER_ID)
+
+
+@pytest.mark.asyncio
 async def test_webhook_rejects_invalid_token() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.verify_webhook_token.return_value = False

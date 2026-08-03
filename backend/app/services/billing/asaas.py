@@ -33,6 +33,19 @@ CANCEL_EVENTS = frozenset(
         "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED",
     }
 )
+# Non-activation lifecycle events. "recorded" is logged only (never grants Premium).
+WEBHOOK_EVENT_STATUS: dict[str, str] = {
+    "PAYMENT_CONFIRMED": "confirmed",
+    "PAYMENT_RECEIVED": "received",
+    "SUBSCRIPTION_CREATED": "recorded",
+    "PAYMENT_OVERDUE": "overdue",
+    "PAYMENT_REFUNDED": "refunded",
+    "PAYMENT_DELETED": "payment_deleted",
+    "PAYMENT_CHARGEBACK_REQUESTED": "chargeback",
+    "SUBSCRIPTION_INACTIVATED": "canceled",
+    "SUBSCRIPTION_DELETED": "canceled",
+}
+PAID_ASAAS_STATUSES = frozenset({"CONFIRMED", "RECEIVED"})
 
 
 class BillingService:
@@ -542,7 +555,7 @@ class BillingService:
         provider_status = str(payment.get("status") or "").upper()
         mapped = self._map_payment_status(provider_status)
 
-        if mapped in {"confirmed", "received", "active"}:
+        if mapped in {"confirmed", "received"}:
             sync_result = await self._process_provider_status(
                 user_id=user_id,
                 external_subscription_id=external_id,
@@ -722,7 +735,7 @@ class BillingService:
 
         status = str(payment.get("status") or "").upper()
         mapped = self._map_payment_status(status)
-        if mapped not in {"confirmed", "received", "active"}:
+        if mapped not in {"confirmed", "received"}:
             return {
                 "updated": False,
                 "reason": "payment_not_confirmed",
@@ -794,7 +807,7 @@ class BillingService:
             and isinstance(result, dict)
             and result.get("subscription_status") == "active"
             and result.get("reason") != "duplicate_event"
-            and provider_status in {"confirmed", "received", "active"}
+            and provider_status in {"confirmed", "received"}
         ):
             await self.notifications.send_premium_activated_email(
                 to_email=notify_email,
@@ -808,6 +821,199 @@ class BillingService:
             return True
         return bool(self.webhook_token and token == self.webhook_token)
 
+    @staticmethod
+    def _map_subscription_updated_status(status: str | None) -> str:
+        """ACTIVE never grants Premium — only cancel/inactive lifecycle."""
+        normalized = str(status or "").upper()
+        if normalized in {"INACTIVE", "EXPIRED", "DELETED"}:
+            return "canceled"
+        return "recorded"
+
+    async def _verify_paid_payment(self, payment_id: str) -> dict[str, Any] | None:
+        """Re-fetch payment from Asaas; only CONFIRMED/RECEIVED may activate Premium."""
+        if not payment_id:
+            return None
+        try:
+            payment = await self._asaas_request("GET", f"/payments/{payment_id}")
+        except (BillingServiceError, BillingProviderError):
+            return None
+        status = str(payment.get("status") or "").upper()
+        if status not in PAID_ASAAS_STATUSES:
+            return None
+        return payment
+
+    async def _lookup_user_id_by_external_id(self, external_id: str) -> UUID | None:
+        if not external_id:
+            return None
+        try:
+            response = await self.db.get(
+                "/user_subscriptions",
+                params={
+                    "external_subscription_id": f"eq.{external_id}",
+                    "select": "user_id",
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError:
+            return None
+        if response.status_code >= 400:
+            return None
+        rows = response.json()
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return None
+        raw_user_id = rows[0].get("user_id")
+        if not raw_user_id:
+            return None
+        try:
+            return UUID(str(raw_user_id))
+        except ValueError:
+            return None
+
+    async def _resolve_webhook_context(
+        self,
+        *,
+        event: str,
+        payment: dict[str, Any],
+        subscription: dict[str, Any],
+    ) -> tuple[UUID, str | None, str | None, str] | None:
+        external_reference = str(
+            payment.get("externalReference") or subscription.get("externalReference") or ""
+        )
+        external_subscription_id = str(
+            subscription.get("id") or payment.get("subscription") or payment.get("id") or ""
+        )
+        if not external_subscription_id:
+            return None
+
+        billing_cycle: str | None = None
+        payment_method: str | None = None
+        user_id: UUID | None = None
+
+        if external_reference:
+            try:
+                user_id, billing_cycle, payment_method = self.parse_external_reference(
+                    external_reference
+                )
+            except (BillingServiceError, ValueError):
+                user_id = None
+
+        if user_id is None:
+            user_id = await self._lookup_user_id_by_external_id(external_subscription_id)
+            if user_id is None and payment.get("subscription"):
+                user_id = await self._lookup_user_id_by_external_id(str(payment["subscription"]))
+
+        if user_id is None:
+            return None
+
+        if event == "SUBSCRIPTION_UPDATED":
+            provider_status = self._map_subscription_updated_status(
+                str(subscription.get("status") or "")
+            )
+        elif event in CANCEL_EVENTS:
+            provider_status = "canceled"
+        elif event in WEBHOOK_EVENT_STATUS:
+            provider_status = WEBHOOK_EVENT_STATUS[event]
+        else:
+            # Unknown events are logged only — never grant Premium.
+            provider_status = "recorded"
+
+        if payment_method is None:
+            billing_type = str(payment.get("billingType") or subscription.get("billingType") or "")
+            payment_method = "pix_automatic" if billing_type.upper() == "PIX" else "card"
+
+        return user_id, billing_cycle, payment_method, provider_status
+
+    async def get_billing_history(self, *, user_id: UUID) -> dict[str, Any]:
+        subscription = await self._load_user_subscription(user_id=user_id)
+
+        try:
+            checkout_response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": (
+                        "id,billing_cycle,payment_method,status,external_subscription_id,"
+                        "created_at,updated_at"
+                    ),
+                    "order": "created_at.desc",
+                    "limit": "20",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not load billing checkouts") from exc
+        if checkout_response.status_code >= 400:
+            raise BillingServiceError("Could not load billing checkouts")
+
+        try:
+            events_response = await self.db.get(
+                "/billing_events",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": "id,event_type,event_key,processed_at,payload",
+                    "order": "processed_at.desc",
+                    "limit": "30",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not load billing events") from exc
+        if events_response.status_code >= 400:
+            raise BillingServiceError("Could not load billing events")
+
+        checkout_rows = checkout_response.json()
+        event_rows = events_response.json()
+        checkouts: list[dict[str, Any]] = []
+        if isinstance(checkout_rows, list):
+            for row in checkout_rows:
+                if not isinstance(row, dict):
+                    continue
+                cycle = str(row.get("billing_cycle") or "monthly")
+                cycle_key: BillingCycle = "annual" if cycle == "annual" else "monthly"
+                pricing = PRICING[cycle_key]
+                checkouts.append(
+                    {
+                        "id": row.get("id"),
+                        "billing_cycle": cycle,
+                        "payment_method": row.get("payment_method"),
+                        "status": row.get("status"),
+                        "external_subscription_id": row.get("external_subscription_id"),
+                        "amount": float(pricing["amount"]),
+                        "currency": "BRL",
+                        "created_at": row.get("created_at"),
+                        "updated_at": row.get("updated_at"),
+                    }
+                )
+
+        events: list[dict[str, Any]] = []
+        if isinstance(event_rows, list):
+            for row in event_rows:
+                if not isinstance(row, dict):
+                    continue
+                payload = row.get("payload")
+                payload_dict = payload if isinstance(payload, dict) else {}
+                events.append(
+                    {
+                        "id": row.get("id"),
+                        "event_type": row.get("event_type") or payload_dict.get("event"),
+                        "event_key": row.get("event_key"),
+                        "processed_at": row.get("processed_at"),
+                        "payment_status": payload_dict.get("status")
+                        if isinstance(payload_dict.get("status"), str)
+                        else None,
+                    }
+                )
+
+        pending_checkout = next(
+            (checkout for checkout in checkouts if checkout.get("status") == "pending"),
+            None,
+        )
+
+        return {
+            "subscription": subscription,
+            "checkouts": checkouts,
+            "events": events,
+            "pending_checkout": pending_checkout,
+        }
+
     async def handle_webhook(self, body: dict[str, Any]) -> dict[str, Any]:
         event = str(body.get("event") or "")
         event_id = str(body.get("id") or event)
@@ -818,59 +1024,65 @@ class BillingService:
             subscription_raw if isinstance(subscription_raw, dict) else {}
         )
 
-        external_reference = str(
-            payment.get("externalReference") or subscription.get("externalReference") or ""
+        resolved = await self._resolve_webhook_context(
+            event=event,
+            payment=payment,
+            subscription=subscription,
         )
-        if not external_reference:
-            return {"processed": False, "reason": "missing_external_reference"}
+        if resolved is None:
+            return {"processed": False, "reason": "unresolved_webhook_context", "event": event}
 
-        try:
-            user_id, billing_cycle, payment_method = self.parse_external_reference(
-                external_reference
-            )
-        except (BillingServiceError, ValueError):
-            return {"processed": False, "reason": "invalid_external_reference"}
-
+        user_id, billing_cycle, payment_method, provider_status = resolved
         external_subscription_id = str(
             subscription.get("id") or payment.get("subscription") or payment.get("id") or ""
         )
-        if not external_subscription_id:
-            return {"processed": False, "reason": "missing_subscription_id"}
+        customer_id = str(payment.get("customer") or subscription.get("customer") or "")
 
+        # Premium only after Asaas confirms the payment resource server-side.
         if event in ACTIVATION_EVENTS:
-            mapped = "confirmed" if event == "PAYMENT_CONFIRMED" else "received"
-            customer_email = None
-            customer_id = str(payment.get("customer") or subscription.get("customer") or "")
-            if customer_id:
-                try:
-                    customer = await self._asaas_request("GET", f"/customers/{customer_id}")
-                    customer_email = str(customer.get("email") or "") or None
-                except BillingServiceError:
-                    customer_email = None
-            result = await self._process_provider_status(
-                user_id=user_id,
-                external_subscription_id=external_subscription_id,
-                external_customer_id=customer_id or None,
-                provider_status=mapped,
-                billing_cycle=billing_cycle,
-                payment_method=payment_method,
-                payload={**payment, **subscription, "event": event},
-                event_key=f"{event_id}:{external_subscription_id}:{mapped}",
-                notify_email=customer_email,
-            )
-            return {"processed": True, **result}
+            payment_id = str(payment.get("id") or "")
+            verified = await self._verify_paid_payment(payment_id)
+            if verified is None:
+                logger.warning(
+                    "Webhook activation rejected: payment not confirmed on Asaas",
+                    extra={
+                        "operation": "webhook_verify_payment",
+                        "provider": PROVIDER,
+                        "event": event,
+                        "payment_id": payment_id,
+                    },
+                )
+                return {
+                    "processed": False,
+                    "reason": "payment_not_confirmed_on_asaas",
+                    "event": event,
+                }
+            payment = verified
+            customer_id = str(payment.get("customer") or customer_id)
+            provider_status = "confirmed" if event == "PAYMENT_CONFIRMED" else "received"
+            # Prefer subscription id when present so renewals stay linked.
+            if payment.get("subscription"):
+                external_subscription_id = str(payment["subscription"])
+            else:
+                external_subscription_id = payment_id
 
-        if event in CANCEL_EVENTS:
-            result = await self._process_provider_status(
-                user_id=user_id,
-                external_subscription_id=external_subscription_id,
-                external_customer_id=str(payment.get("customer") or "") or None,
-                provider_status="canceled",
-                billing_cycle=billing_cycle,
-                payment_method=payment_method,
-                payload={**payment, **subscription, "event": event},
-                event_key=f"{event_id}:{external_subscription_id}:canceled",
-            )
-            return {"processed": True, **result}
+        notify_email: str | None = None
+        if provider_status in {"confirmed", "received"} and customer_id:
+            try:
+                customer = await self._asaas_request("GET", f"/customers/{customer_id}")
+                notify_email = str(customer.get("email") or "") or None
+            except BillingServiceError:
+                notify_email = None
 
-        return {"processed": True, "reason": "ignored_event", "event": event}
+        result = await self._process_provider_status(
+            user_id=user_id,
+            external_subscription_id=external_subscription_id,
+            external_customer_id=customer_id or None,
+            provider_status=provider_status,
+            billing_cycle=billing_cycle,
+            payment_method=payment_method,
+            payload={**payment, **subscription, "event": event},
+            event_key=f"{event_id}:{external_subscription_id}:{provider_status}",
+            notify_email=notify_email,
+        )
+        return {"processed": True, "event": event, **result}

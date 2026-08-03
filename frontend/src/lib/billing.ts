@@ -58,6 +58,45 @@ export type BillingSubscription = {
   manage_url: string | null;
 };
 
+export type BillingCheckoutHistoryItem = {
+  id?: number | null;
+  billing_cycle?: BillingCycle | null;
+  payment_method?: string | null;
+  status?: string | null;
+  external_subscription_id?: string | null;
+  amount?: number | null;
+  currency?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type BillingEventHistoryItem = {
+  id?: number | null;
+  event_type?: string | null;
+  event_key?: string | null;
+  processed_at?: string | null;
+  payment_status?: string | null;
+};
+
+export type BillingHistorySubscription = {
+  plan_id?: string | null;
+  status?: string | null;
+  started_at?: string | null;
+  ends_at?: string | null;
+  renews_at?: string | null;
+  billing_cycle?: BillingCycle | null;
+  subscription_source?: string | null;
+  payment_method?: string | null;
+  external_subscription_id?: string | null;
+};
+
+export type BillingHistory = {
+  subscription: BillingHistorySubscription | null;
+  checkouts: BillingCheckoutHistoryItem[];
+  events: BillingEventHistoryItem[];
+  pending_checkout?: BillingCheckoutHistoryItem | null;
+};
+
 export async function subscribeCheckout(
   accessToken: string,
   payload: CheckoutSubscribePayload,
@@ -87,6 +126,10 @@ export async function refreshBillingSubscription(accessToken: string) {
 
 export async function loadBillingSubscription(accessToken: string) {
   return apiRequest<BillingSubscription>("/api/v1/billing/subscription", { accessToken });
+}
+
+export async function loadBillingHistory(accessToken: string) {
+  return apiRequest<BillingHistory>("/api/v1/billing/history", { accessToken });
 }
 
 export async function cancelBillingSubscription(accessToken: string) {

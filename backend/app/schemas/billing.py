@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -75,3 +75,30 @@ class CheckoutStatusResponse(BaseModel):
     pix_copy_paste: str | None = None
     checkout_created_at: datetime | None = None
     message: str | None = None
+
+
+class BillingCheckoutHistoryItem(BaseModel):
+    id: int | None = None
+    billing_cycle: BillingCycle | None = None
+    payment_method: str | None = None
+    status: str | None = None
+    external_subscription_id: str | None = None
+    amount: float | None = None
+    currency: str = "BRL"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class BillingEventHistoryItem(BaseModel):
+    id: int | None = None
+    event_type: str | None = None
+    event_key: str | None = None
+    processed_at: datetime | None = None
+    payment_status: str | None = None
+
+
+class BillingHistoryResponse(BaseModel):
+    subscription: dict[str, Any] | None = None
+    checkouts: list[BillingCheckoutHistoryItem] = Field(default_factory=list)
+    events: list[BillingEventHistoryItem] = Field(default_factory=list)
+    pending_checkout: BillingCheckoutHistoryItem | None = None

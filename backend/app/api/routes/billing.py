@@ -7,6 +7,7 @@ from app.api.dependencies import BillingDependency, EntitlementDependency
 from app.core.security import get_current_user
 from app.schemas.auth import AuthenticatedUser
 from app.schemas.billing import (
+    BillingHistoryResponse,
     BillingRefreshResponse,
     BillingSubscriptionView,
     CancelSubscriptionResponse,
@@ -171,6 +172,30 @@ async def checkout_status(
             detail="Não foi possível consultar o pagamento agora.",
         ) from exc
     return CheckoutStatusResponse.model_validate(result)
+
+
+@router.get("/history", response_model=BillingHistoryResponse)
+async def billing_history(
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> BillingHistoryResponse:
+    try:
+        result = await billing.get_billing_history(user_id=user.id)
+    except BillingServiceError as exc:
+        logger.exception(
+            "Billing operation failed",
+            extra={
+                "operation": "billing_history",
+                "provider": "asaas",
+                "billing_cycle": "current",
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível carregar seu histórico de pagamentos.",
+        ) from exc
+    return BillingHistoryResponse.model_validate(result)
 
 
 @router.post("/subscription/cancel", response_model=CancelSubscriptionResponse)

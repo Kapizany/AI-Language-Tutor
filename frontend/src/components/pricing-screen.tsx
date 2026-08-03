@@ -137,40 +137,28 @@ export function PricingScreen({
       return;
     }
     const token = accessToken;
+    // Light poll: only /refresh (no PIX QR fetch every interval).
     pollRef.current = window.setInterval(() => {
       void (async () => {
         try {
-          const status = await loadCheckoutStatus(token);
-          setCheckoutStatus(status);
-          if (!status.has_pending_checkout) {
+          const result = await refreshBillingSubscription(token);
+          if (result.plan_id === "premium" || result.subscription_status === "active") {
             if (pollRef.current) {
               window.clearInterval(pollRef.current);
               pollRef.current = null;
             }
-            if (status.payment_status === "confirmed") {
-              await refreshBillingSubscription(token);
-              await finishSubscription();
-            }
-            return;
-          }
-          const restored = checkoutStatusToResult(status);
-          if (restored) {
-            setCheckoutResult(restored);
-            setStatusMessage(restored.message);
-          }
-          if (status.payment_status === "confirmed") {
-            if (pollRef.current) {
-              window.clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
-            await refreshBillingSubscription(token);
+            setCheckoutStatus((current) =>
+              current
+                ? { ...current, has_pending_checkout: false, payment_status: "confirmed" }
+                : current,
+            );
             await finishSubscription();
           }
         } catch {
           // Keep polling until timeout or success.
         }
       })();
-    }, 4000);
+    }, 5000);
   }
 
   async function applyCheckoutStatus(status: CheckoutStatus) {

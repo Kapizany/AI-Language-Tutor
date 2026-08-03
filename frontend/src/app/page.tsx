@@ -12,6 +12,7 @@ import {
   CircleUserRound,
   Clock3,
   Coffee,
+  CreditCard,
   Download,
   Eye,
   EyeOff,
@@ -66,10 +67,9 @@ import { isNearLimit, UPGRADE_HIGHLIGHTS } from "@/lib/pricing";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
 import { PlanComparison } from "@/components/plan-comparison";
 import { PricingScreen } from "@/components/pricing-screen";
+import { BillingAccountPanel } from "@/components/billing-account-panel";
 import { BillingResultScreen } from "@/components/billing-result-screen";
 import { loadIsAdmin } from "@/lib/admin";
-import { cancelBillingSubscription, loadCheckoutStatus, type CheckoutStatus } from "@/lib/billing";
-import { PendingCheckoutPanel } from "@/components/pending-checkout-panel";
 import {
   goalLabels,
   languageDetails,
@@ -1025,7 +1025,7 @@ function Profile({
   session: Session | null;
 }) {
   const { preferences, studiedLanguages, isAdmin, goToPricing, switchLanguage, addLanguage } = useLearner();
-  const [section, setSection] = useState<"profile" | "languages" | "plan" | "notifications">("profile");
+  const [section, setSection] = useState<"profile" | "languages" | "plan" | "billing" | "notifications">("profile");
   const [name, setName] = useState(displayName);
   const [draft, setDraft] = useState<LearnerPreferences>(preferences || {
     targetLanguage: "en",
@@ -1046,9 +1046,17 @@ function Profile({
   const [entitlements, setEntitlements] = useState<EntitlementsSummary | null>(null);
   const [entitlementsLoading, setEntitlementsLoading] = useState(false);
   const [entitlementsError, setEntitlementsError] = useState("");
-  const [cancelingSubscription, setCancelingSubscription] = useState(false);
-  const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
-  const [checkoutStatusLoading, setCheckoutStatusLoading] = useState(false);
+
+  const accessToken = session?.access_token;
+
+  const reloadEntitlements = async () => {
+    if (!accessToken) return;
+    try {
+      setEntitlements(await loadEntitlements(accessToken));
+    } catch {
+      setEntitlementsError("Não foi possível atualizar o plano.");
+    }
+  };
 
   const resolvedLanguageLevels = studiedLanguages.map((entry) => ({
     ...entry,
@@ -1078,59 +1086,6 @@ function Profile({
     void load();
     return () => { active = false; };
   }, [section, session?.access_token]);
-
-  useEffect(() => {
-    if (!session?.access_token || section !== "plan") return;
-    let active = true;
-    const load = async () => {
-      setCheckoutStatusLoading(true);
-      try {
-        const status = await loadCheckoutStatus(session.access_token);
-        if (active) setCheckoutStatus(status);
-      } catch {
-        if (active) setCheckoutStatus(null);
-      } finally {
-        if (active) setCheckoutStatusLoading(false);
-      }
-    };
-    void load();
-    return () => { active = false; };
-  }, [section, session?.access_token]);
-
-  const refreshCheckoutStatus = async () => {
-    if (!session?.access_token) return;
-    setCheckoutStatusLoading(true);
-    try {
-      const status = await loadCheckoutStatus(session.access_token);
-      setCheckoutStatus(status);
-      if (!status.has_pending_checkout && status.payment_status === "confirmed") {
-        setEntitlements(await loadEntitlements(session.access_token));
-      }
-    } catch {
-      setEntitlementsError("Não foi possível atualizar o status do pagamento.");
-    } finally {
-      setCheckoutStatusLoading(false);
-    }
-  };
-
-  const cancelSubscription = async () => {
-    if (!session?.access_token || cancelingSubscription) return;
-    if (!window.confirm("Cancelar a renovação automática da assinatura Premium?")) return;
-
-    setCancelingSubscription(true);
-    setEntitlementsError("");
-    try {
-      await cancelBillingSubscription(session.access_token);
-      setEntitlements(await loadEntitlements(session.access_token));
-      setFeedback({
-        success: "Assinatura cancelada. Seu acesso continua até o fim do período pago.",
-      });
-    } catch {
-      setEntitlementsError("Não foi possível cancelar a assinatura agora.");
-    } finally {
-      setCancelingSubscription(false);
-    }
-  };
 
   const save = async () => {
     setSaving(true);
@@ -1181,6 +1136,7 @@ function Profile({
           <button className={section === "profile" ? "active" : ""} onClick={() => setSection("profile")}><CircleUserRound/> Perfil</button>
           <button className={section === "languages" ? "active" : ""} onClick={() => setSection("languages")}><Languages/> Idiomas</button>
           <button className={section === "plan" ? "active" : ""} onClick={() => setSection("plan")}><Target/> Plano e metas</button>
+          <button className={section === "billing" ? "active" : ""} onClick={() => setSection("billing")}><CreditCard/> Pagamentos</button>
           <button className={section === "notifications" ? "active" : ""} onClick={() => setSection("notifications")}><Bell/> Notificações</button>
           {isAdmin && (
             <button type="button" className="settings-admin-link" onClick={() => go("admin")}>
@@ -1244,13 +1200,10 @@ function Profile({
             {!entitlementsLoading && entitlements && (
               <p className="usage-note">Chamadas de IA incluem respostas do tutor, correções e exercícios. Os limites são redefinidos todo dia.</p>
             )}
-            {!entitlementsLoading && entitlements?.plan_id === "free" && checkoutStatus?.has_pending_checkout && (
-              <PendingCheckoutPanel
-                status={checkoutStatus}
-                loading={checkoutStatusLoading}
-                onRefresh={refreshCheckoutStatus}
-                onContinueCheckout={goToPricing}
-              />
+            {!entitlementsLoading && (
+              <Button variant="secondary" onClick={() => setSection("billing")}>
+                Ver pagamentos e assinatura
+              </Button>
             )}
             {!entitlementsLoading && entitlements?.plan_id === "free" && (
               <UpgradePrompt
@@ -1260,57 +1213,6 @@ function Profile({
                 ctaLabel="Assinar Premium"
                 highlights={UPGRADE_HIGHLIGHTS}
               />
-            )}
-            {!entitlementsLoading && entitlements?.plan_id === "premium" && entitlements.subscription_ends_at && (
-              <p className="usage-note">
-                Seu Premium permanece ativo até {new Date(entitlements.subscription_ends_at).toLocaleDateString("pt-BR")}.
-              </p>
-            )}
-            {!entitlementsLoading && entitlements?.plan_id === "premium" && (
-              <div className="billing-lifecycle">
-                <p>
-                  <strong>Assinatura:</strong>{" "}
-                  {entitlements.subscription_status === "canceled" ? "Cancelada" : "Ativa"}
-                  {" · "}
-                  {entitlements.billing_cycle === "annual"
-                    ? "Anual"
-                    : entitlements.billing_cycle === "monthly"
-                      ? "Mensal"
-                      : "Ciclo não informado"}
-                </p>
-                <p>
-                  <strong>Início:</strong>{" "}
-                  {entitlements.subscription_started_at
-                    ? new Date(entitlements.subscription_started_at).toLocaleDateString("pt-BR")
-                    : "não informado"}
-                </p>
-                <p>
-                  <strong>
-                    {entitlements.subscription_ends_at ? "Término:" : "Próxima renovação:"}
-                  </strong>{" "}
-                  {entitlements.subscription_ends_at
-                    ? new Date(entitlements.subscription_ends_at).toLocaleDateString("pt-BR")
-                    : entitlements.subscription_renews_at
-                      ? new Date(entitlements.subscription_renews_at).toLocaleDateString("pt-BR")
-                      : "aguardando confirmação"}
-                </p>
-              </div>
-            )}
-            {!entitlementsLoading
-              && entitlements?.plan_id === "premium"
-              && entitlements.can_manage_billing && (
-              <div className="billing-management">
-                {entitlements.subscription_status !== "canceled" && (
-                  <Button
-                    variant="danger"
-                    disabled={cancelingSubscription}
-                    onClick={() => void cancelSubscription()}
-                  >
-                    {cancelingSubscription ? "Cancelando..." : "Cancelar assinatura"}
-                  </Button>
-                )}
-                <p className="usage-note">O acesso continua até o fim do período pago.</p>
-              </div>
             )}
             {entitlements && !entitlementsLoading && entitlements.plan_id === "free" && (
               <PlanComparison variant="compact" currentPlan="free" highlightColumn="premium" />
@@ -1331,10 +1233,17 @@ function Profile({
             <label>Dias por semana<select value={draft.studyDaysPerWeek} onChange={(event) => setDraft({...draft, studyDaysPerWeek: Number(event.target.value)})}>{[1,2,3,4,5,6,7].map((days) => <option key={days} value={days}>{days} {days === 1 ? "dia" : "dias"}</option>)}</select></label>
             <label>Correções<select value={draft.correctionPreference} onChange={(event) => setDraft({...draft, correctionPreference: event.target.value as OnboardingData["correctionPreference"]})}><option value="immediate">Durante a conversa</option><option value="grouped">Em pequenos grupos</option><option value="final">Somente ao final</option></select></label>
           </div></section>}
+          {section === "billing" && (
+            <BillingAccountPanel
+              session={session}
+              onGoToPricing={goToPricing}
+              onSubscriptionChanged={reloadEntitlements}
+            />
+          )}
           {section === "notifications" && <section><h3>Notificações</h3><p>Os lembretes ainda não são enviados. Essa opção será ativada quando o serviço de notificações estiver disponível.</p></section>}
           {feedback.error && <div className="form-message form-error" role="alert">{feedback.error}</div>}
           {feedback.success && <div className="form-message form-success" role="status">{feedback.success}</div>}
-          {section !== "notifications" && <div className="save-row"><Button onClick={save} disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</Button></div>}
+          {section !== "notifications" && section !== "billing" && <div className="save-row"><Button onClick={save} disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</Button></div>}
         </main>
       </div>
     </div>

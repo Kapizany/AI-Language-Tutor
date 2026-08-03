@@ -126,27 +126,45 @@ test("migration contém o catálogo completo que será carregado do Supabase", (
     });
   }
 
+  const advancedMixedMigration = readFileSync(
+    new URL("../../supabase/migrations/20260803170000_advanced_b1_b2_mixed_exercises.sql", import.meta.url),
+    "utf8",
+  );
+
   assert.equal(
     (readingClozeMigration.match(/update public\.reading_passages set/g) || []).length,
     160,
   );
   assert.match(readingClozeMigration, /A1=3, A2=4, B1=6, B2=8/);
-  assert.ok((readingClozeMigration.match(/___/g) || []).length >= 840);
-  assert.ok((readingClozeMigration.match(/"prompt": "Complete:/g) || []).length >= 840);
+
+  // Advanced migration upgrades all readings/quick lessons and B1/B2 grammar.
+  assert.equal(
+    (advancedMixedMigration.match(/update public\.reading_passages set/g) || []).length,
+    160,
+  );
+  assert.equal(
+    (advancedMixedMigration.match(/update public\.quick_lessons set/g) || []).length,
+    800,
+  );
+  assert.ok((advancedMixedMigration.match(/update public\.grammar_exercises set/g) || []).length >= 700);
+  assert.ok(advancedMixedMigration.includes("What is the main idea of the text?"));
+  assert.ok(advancedMixedMigration.includes("Which sentence correctly uses"));
 
   for (const [level, count] of [["a1", 3], ["a2", 4], ["b1", 6], ["b2", 8]] as const) {
-    const levelUpdates = [...readingClozeMigration.matchAll(
-      new RegExp(`where id = '(?:en|es|fr|it)-passage-${level}-\\d+'`, "g"),
-    )];
-    assert.equal(levelUpdates.length, 40);
     const sampleId = `en-passage-${level}-01`;
-    const sampleIndex = readingClozeMigration.indexOf(`where id = '${sampleId}'`);
+    const sampleIndex = advancedMixedMigration.indexOf(`where id = '${sampleId}'`);
     assert.ok(sampleIndex > 0);
-    const assignmentStart = readingClozeMigration.lastIndexOf("questions = '", sampleIndex);
+    const assignmentStart = advancedMixedMigration.lastIndexOf("questions = '", sampleIndex);
     assert.ok(assignmentStart > 0 && assignmentStart < sampleIndex);
-    const sampleBlock = readingClozeMigration.slice(assignmentStart, sampleIndex);
-    const promptMatches = sampleBlock.match(/"prompt": "Complete:/g) || [];
+    const sampleBlock = advancedMixedMigration.slice(assignmentStart, sampleIndex);
+    const promptMatches = sampleBlock.match(/"prompt": "/g) || [];
     assert.equal(promptMatches.length, count);
+    if (level === "a1" || level === "a2") {
+      assert.equal((sampleBlock.match(/"prompt": "Complete:/g) || []).length, count);
+    } else {
+      assert.ok((sampleBlock.match(/"prompt": "Complete:/g) || []).length >= 1);
+      assert.ok((sampleBlock.match(/"prompt": "Complete:/g) || []).length < count);
+    }
   }
 
   assert.ok(quickLessonClozeMigration.includes("add column if not exists questions jsonb"));
@@ -155,7 +173,6 @@ test("migration contém o catálogo completo que será carregado do Supabase", (
     (quickLessonClozeMigration.match(/update public\.quick_lessons set/g) || []).length,
     800,
   );
-  assert.ok((quickLessonClozeMigration.match(/___/g) || []).length >= 2800);
 });
 
 test("dashboard calcula sequência, semana e progresso diário com atividades reais", () => {

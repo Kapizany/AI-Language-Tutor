@@ -97,8 +97,9 @@ begin
     select 1
     from public.grammar_exercises
     where is_published
+      and level in ('A1', 'A2')
       and (
-        question not like '%___%'
+        position('___' in question) = 0
         or question in (
           'Choose the correct sentence.',
           'Elige la frase correcta.',
@@ -107,7 +108,41 @@ begin
         )
       )
   ) then
-    raise exception 'Grammar catalog failure: exercises must be topic-aligned cloze prompts';
+    raise exception 'Grammar catalog failure: A1/A2 exercises must be topic-aligned cloze prompts';
+  end if;
+
+  if exists (
+    select 1
+    from public.grammar_exercises
+    where is_published
+      and level in ('B1', 'B2')
+      and question in (
+        'Choose the correct sentence.',
+        'Elige la frase correcta.',
+        'Choisissez la phrase correcte.',
+        'Scegli la frase corretta.'
+      )
+  ) then
+    raise exception 'Grammar catalog failure: B1/B2 still use generic stems';
+  end if;
+
+  if not exists (
+    select 1
+    from public.grammar_exercises
+    where is_published
+      and level in ('B1', 'B2')
+      and (
+        question like 'Which sentence correctly uses%'
+        or question like 'What does this sentence express%'
+        or question like '¿Qué frase usa correctamente%'
+        or question like '¿Qué expresa esta frase%'
+        or question like 'Quelle phrase utilise correctement%'
+        or question like 'Que signifie cette phrase%'
+        or question like 'Quale frase usa correttamente%'
+        or question like 'Cosa esprime questa frase%'
+      )
+  ) then
+    raise exception 'Grammar catalog failure: B1/B2 need mixed non-cloze exercise types';
   end if;
 
   if exists (
@@ -141,10 +176,10 @@ begin
     from public.quick_lessons lesson
     cross join lateral jsonb_array_elements(lesson.questions) as question(value)
     where lesson.is_published
+      and lesson.level in ('A1', 'A2')
       and (
-        coalesce(question.value ->> 'prompt', '') not like '%___%'
-        or (lesson.level in ('A1', 'A2') and jsonb_array_length(question.value -> 'options') <> 3)
-        or (lesson.level in ('B1', 'B2') and jsonb_array_length(question.value -> 'options') <> 4)
+        position('___' in coalesce(question.value ->> 'prompt', '')) = 0
+        or jsonb_array_length(question.value -> 'options') <> 3
         or question.value ->> 'prompt' in (
           'What helped Maya reach the goal?',
           'What helped Leo reach the goal?',
@@ -153,7 +188,37 @@ begin
         )
       )
   ) then
-    raise exception 'Quick lesson failure: questions must be topic-aligned cloze prompts';
+    raise exception 'Quick lesson failure: A1/A2 questions must be topic-aligned cloze prompts';
+  end if;
+
+  if exists (
+    select 1
+    from public.quick_lessons lesson
+    cross join lateral jsonb_array_elements(lesson.questions) as question(value)
+    where lesson.is_published
+      and lesson.level in ('B1', 'B2')
+      and (
+        jsonb_array_length(question.value -> 'options') <> 4
+        or question.value ->> 'prompt' in (
+          'What helped Maya reach the goal?',
+          'What helped Leo reach the goal?',
+          'What helped Nina reach the goal?',
+          'What helped Sam reach the goal?'
+        )
+      )
+  ) then
+    raise exception 'Quick lesson failure: B1/B2 questions must keep 4 options and avoid generic stems';
+  end if;
+
+  if not exists (
+    select 1
+    from public.quick_lessons lesson
+    cross join lateral jsonb_array_elements(lesson.questions) as question(value)
+    where lesson.is_published
+      and lesson.level in ('B1', 'B2')
+      and position('___' in coalesce(question.value ->> 'prompt', '')) = 0
+  ) then
+    raise exception 'Quick lesson failure: B1/B2 need interpretation questions beyond cloze';
   end if;
 
   if (
@@ -175,7 +240,7 @@ begin
         or (level = 'B2' and jsonb_array_length(questions) <> 8)
       )
   ) then
-    raise exception 'Reading failure: expected A1=3, A2=4, B1=6, B2=8 cloze questions';
+    raise exception 'Reading failure: expected A1=3, A2=4, B1=6, B2=8 questions';
   end if;
 
   if exists (
@@ -183,13 +248,47 @@ begin
     from public.reading_passages passage
     cross join lateral jsonb_array_elements(passage.questions) as question(value)
     where passage.is_published
+      and passage.level in ('A1', 'A2')
       and (
-        coalesce(question.value ->> 'prompt', '') not like '%___%'
-        or (passage.level in ('A1', 'A2') and jsonb_array_length(question.value -> 'options') <> 3)
-        or (passage.level in ('B1', 'B2') and jsonb_array_length(question.value -> 'options') <> 4)
+        position('___' in coalesce(question.value ->> 'prompt', '')) = 0
+        or jsonb_array_length(question.value -> 'options') <> 3
       )
   ) then
-    raise exception 'Reading failure: questions must be text-aligned cloze prompts';
+    raise exception 'Reading failure: A1/A2 questions must be text-aligned cloze prompts';
+  end if;
+
+  if exists (
+    select 1
+    from public.reading_passages passage
+    cross join lateral jsonb_array_elements(passage.questions) as question(value)
+    where passage.is_published
+      and passage.level in ('B1', 'B2')
+      and jsonb_array_length(question.value -> 'options') <> 4
+  ) then
+    raise exception 'Reading failure: B1/B2 questions need 4 options';
+  end if;
+
+  if not exists (
+    select 1
+    from public.reading_passages passage
+    cross join lateral jsonb_array_elements(passage.questions) as question(value)
+    where passage.is_published
+      and passage.level in ('B1', 'B2')
+      and position('___' in coalesce(question.value ->> 'prompt', '')) = 0
+  ) then
+    raise exception 'Reading failure: B1/B2 need interpretation questions beyond cloze';
+  end if;
+
+  if not exists (
+    select 1
+    from public.reading_passages passage
+    cross join lateral jsonb_array_elements(passage.questions) as question(value)
+    where passage.is_published
+      and passage.level in ('B1', 'B2')
+      and position('___' in coalesce(question.value ->> 'prompt', '')) > 0
+      and length(coalesce(question.value -> 'options' ->> ((question.value ->> 'answer_index')::int), '')) >= 6
+  ) then
+    raise exception 'Reading failure: B1/B2 still need some multi-word or cloze items';
   end if;
 
 end;

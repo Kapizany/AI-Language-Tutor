@@ -87,6 +87,16 @@ class BillingCheckoutHistoryItem(BaseModel):
     currency: str = "BRL"
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    can_resume: bool = False
+    can_retry: bool = False
+
+
+class ResumeCheckoutRequest(BaseModel):
+    external_subscription_id: str = Field(min_length=1, max_length=120)
+
+
+class AbandonCheckoutRequest(BaseModel):
+    external_subscription_id: str | None = Field(default=None, max_length=120)
 
 
 class BillingEventHistoryItem(BaseModel):

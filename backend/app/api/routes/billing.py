@@ -7,6 +7,7 @@ from app.api.dependencies import BillingDependency, EntitlementDependency
 from app.core.security import get_current_user
 from app.schemas.auth import AuthenticatedUser
 from app.schemas.billing import (
+    AbandonCheckoutRequest,
     BillingHistoryResponse,
     BillingRefreshResponse,
     BillingSubscriptionView,
@@ -14,6 +15,7 @@ from app.schemas.billing import (
     CheckoutStatusResponse,
     CheckoutSubscribeRequest,
     CheckoutSubscribeResponse,
+    ResumeCheckoutRequest,
 )
 from app.services.billing import (
     AlreadyPremiumError,
@@ -196,6 +198,50 @@ async def billing_history(
             detail="Não foi possível carregar seu histórico de pagamentos.",
         ) from exc
     return BillingHistoryResponse.model_validate(result)
+
+
+@router.post("/checkout/resume", response_model=CheckoutStatusResponse)
+async def resume_checkout(
+    payload: ResumeCheckoutRequest,
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CheckoutStatusResponse:
+    try:
+        result = await billing.resume_pending_checkout(
+            user_id=user.id,
+            external_subscription_id=payload.external_subscription_id,
+        )
+    except Exception as exc:
+        _raise_billing_http_error(
+            exc=exc,
+            operation="checkout_resume",
+            billing_cycle="current",
+            unavailable_detail="Pagamentos ainda não estão disponíveis.",
+            failure_detail="Não foi possível recuperar este pagamento agora.",
+        )
+    return CheckoutStatusResponse.model_validate(result)
+
+
+@router.post("/checkout/abandon", response_model=CheckoutStatusResponse)
+async def abandon_checkout(
+    payload: AbandonCheckoutRequest,
+    billing: BillingDependency,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> CheckoutStatusResponse:
+    try:
+        result = await billing.abandon_pending_checkout(
+            user_id=user.id,
+            external_subscription_id=payload.external_subscription_id,
+        )
+    except Exception as exc:
+        _raise_billing_http_error(
+            exc=exc,
+            operation="checkout_abandon",
+            billing_cycle="current",
+            unavailable_detail="Pagamentos ainda não estão disponíveis.",
+            failure_detail="Não foi possível cancelar esta cobrança agora.",
+        )
+    return CheckoutStatusResponse.model_validate(result)
 
 
 @router.post("/subscription/cancel", response_model=CancelSubscriptionResponse)

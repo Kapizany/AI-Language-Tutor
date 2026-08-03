@@ -20,8 +20,10 @@ import { PendingCheckoutPanel } from "@/components/pending-checkout-panel";
 import { PlanComparison } from "@/components/plan-comparison";
 import { Button } from "@/components/ui";
 import {
+  abandonPendingCheckout,
   loadCheckoutStatus,
   refreshBillingSubscription,
+  resumePendingCheckout,
   subscribeCheckout,
   type BillingCycle,
   type CheckoutStatus,
@@ -143,10 +145,7 @@ export function PricingScreen({
         try {
           const result = await refreshBillingSubscription(token);
           if (result.plan_id === "premium" || result.subscription_status === "active") {
-            if (pollRef.current) {
-              window.clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
+            clearPolling();
             setCheckoutStatus((current) =>
               current
                 ? { ...current, has_pending_checkout: false, payment_status: "confirmed" }
@@ -161,11 +160,31 @@ export function PricingScreen({
     }, 5000);
   }
 
+  function clearPolling() {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
   async function applyCheckoutStatus(status: CheckoutStatus) {
     setCheckoutStatus(status);
     if (!status.has_pending_checkout) {
+      clearPolling();
       if (status.payment_status === "confirmed") {
         await finishSubscription();
+        return;
+      }
+      setStep("form");
+      setCheckoutResult(null);
+      if (status.message) {
+        setStatusMessage(status.message);
+      } else if (
+        status.payment_status === "canceled"
+        || status.checkout_status === "cancelled"
+        || status.checkout_status === "failed"
+      ) {
+        setStatusMessage("Pagamento encerrado. Você pode tentar novamente.");
       }
       return;
     }
@@ -189,6 +208,50 @@ export function PricingScreen({
       return;
     }
     startPolling();
+  }
+
+  async function continuePixCheckout() {
+    if (!accessToken) return;
+    const externalId =
+      checkoutStatus?.external_subscription_id
+      || checkoutResult?.external_subscription_id;
+    if (!externalId) return;
+    setStatusLoading(true);
+    setError("");
+    try {
+      const status = await resumePendingCheckout(accessToken, externalId);
+      await applyCheckoutStatus(status);
+    } catch {
+      setError("Não foi possível recuperar o PIX agora. Tente atualizar o status.");
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
+  async function retryPendingPayment() {
+    if (!accessToken) return;
+    const externalId =
+      checkoutStatus?.external_subscription_id
+      || checkoutResult?.external_subscription_id
+      || null;
+    setStatusLoading(true);
+    setError("");
+    try {
+      const status = await abandonPendingCheckout(accessToken, externalId);
+      clearPolling();
+      setCheckoutStatus(status);
+      setCheckoutResult(null);
+      setStep("form");
+      setStatusMessage(
+        status.message
+        || "Cobrança anterior cancelada. Preencha os dados para tentar novamente.",
+      );
+    } catch {
+      setError("Não foi possível cancelar a cobrança pendente. Tente novamente em instantes.");
+      throw new Error("abandon_failed");
+    } finally {
+      setStatusLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -531,6 +594,12 @@ export function PricingScreen({
                   )}
                 </div>
 
+                {statusMessage && (
+                  <p className="pricing-brick-status" role="status">
+                    {statusMessage}
+                  </p>
+                )}
+
                 <Button full onClick={() => void submitCheckout()} disabled={loading}>
                   {loading
                     ? "Processando..."
@@ -557,6 +626,8 @@ export function PricingScreen({
                 }
                 loading={statusLoading}
                 onRefresh={refreshCheckoutStatus}
+                onContinueCheckout={() => void continuePixCheckout()}
+                onRetryPayment={retryPendingPayment}
                 onGoToProfile={() => go("profile")}
                 showProfileLink
               />

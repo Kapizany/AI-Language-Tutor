@@ -7,10 +7,13 @@ import { CreditCard, RefreshCw } from "lucide-react";
 import { PendingCheckoutPanel } from "@/components/pending-checkout-panel";
 import { Button } from "@/components/ui";
 import {
+  abandonPendingCheckout,
   cancelBillingSubscription,
   loadBillingHistory,
   loadCheckoutStatus,
   refreshBillingSubscription,
+  resumePendingCheckout,
+  type BillingCheckoutHistoryItem,
   type BillingHistory,
   type CheckoutStatus,
 } from "@/lib/billing";
@@ -68,6 +71,8 @@ export function BillingAccountPanel({
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [activeResume, setActiveResume] = useState<CheckoutStatus | null>(null);
   const [error, setError] = useState("");
   const accessToken = session?.access_token;
 
@@ -155,6 +160,49 @@ export function BillingAccountPanel({
     }
   };
 
+  const resumeCheckout = async (checkout: BillingCheckoutHistoryItem) => {
+    if (!accessToken || !checkout.external_subscription_id) return;
+    setResumingId(checkout.external_subscription_id);
+    setError("");
+    try {
+      const status = await resumePendingCheckout(
+        accessToken,
+        checkout.external_subscription_id,
+      );
+      setActiveResume(status);
+      setCheckoutStatus(status);
+      if (!status.has_pending_checkout) {
+        await reload();
+      }
+    } catch {
+      setError("Não foi possível recuperar este pagamento. Atualize e tente novamente.");
+    } finally {
+      setResumingId(null);
+    }
+  };
+
+  const retryCheckout = async (checkout?: BillingCheckoutHistoryItem | null) => {
+    if (!accessToken) return;
+    const externalId =
+      checkout?.external_subscription_id
+      || activeResume?.external_subscription_id
+      || checkoutStatus?.external_subscription_id
+      || null;
+    setResumingId(externalId || "retry");
+    setError("");
+    try {
+      const status = await abandonPendingCheckout(accessToken, externalId);
+      setActiveResume(null);
+      setCheckoutStatus(status);
+      await reload();
+      onGoToPricing?.();
+    } catch {
+      setError("Não foi possível reiniciar o pagamento. Atualize e tente novamente.");
+    } finally {
+      setResumingId(null);
+    }
+  };
+
   const subscription = history?.subscription;
   const planId = String(subscription?.plan_id || "free");
   const subscriptionStatus = String(subscription?.status || "active");
@@ -233,12 +281,35 @@ export function BillingAccountPanel({
         </div>
       )}
 
-      {checkoutStatus?.has_pending_checkout && (
+      {(activeResume?.has_pending_checkout || checkoutStatus?.has_pending_checkout) && (
         <PendingCheckoutPanel
-          status={checkoutStatus}
-          loading={loading}
-          onRefresh={refreshCheckoutStatus}
-          onContinueCheckout={onGoToPricing}
+          status={activeResume?.has_pending_checkout ? activeResume : checkoutStatus!}
+          loading={loading || Boolean(resumingId)}
+          onRefresh={async () => {
+            if (activeResume?.external_subscription_id && accessToken) {
+              const status = await resumePendingCheckout(
+                accessToken,
+                activeResume.external_subscription_id,
+              );
+              setActiveResume(status);
+              setCheckoutStatus(status);
+              if (!status.has_pending_checkout) {
+                await reload();
+              }
+              return;
+            }
+            await refreshCheckoutStatus();
+          }}
+          onContinueCheckout={
+            (activeResume?.payment_method || checkoutStatus?.payment_method) === "pix_automatic"
+              ? () => {
+                  const pending = history?.pending_checkout;
+                  if (pending) void resumeCheckout(pending);
+                  else onGoToPricing?.();
+                }
+              : onGoToPricing
+          }
+          onRetryPayment={() => retryCheckout(history?.pending_checkout)}
         />
       )}
 
@@ -270,6 +341,33 @@ export function BillingAccountPanel({
                   <span>{checkout.amount != null ? formatBrl(checkout.amount) : "—"}</span>
                   <span>{formatDate(checkout.created_at)}</span>
                 </div>
+                {(checkout.can_resume || checkout.can_retry) && checkout.external_subscription_id && (
+                  <div className="billing-history-item-actions">
+                    {checkout.can_resume && (
+                      <Button
+                        full
+                        disabled={loading || resumingId === checkout.external_subscription_id}
+                        onClick={() => void resumeCheckout(checkout)}
+                      >
+                        {resumingId === checkout.external_subscription_id
+                          ? "Abrindo PIX..."
+                          : "Finalizar pagamento"}
+                      </Button>
+                    )}
+                    {checkout.can_retry && (
+                      <Button
+                        variant={checkout.can_resume ? "secondary" : "primary"}
+                        full
+                        disabled={loading || Boolean(resumingId)}
+                        onClick={() => void retryCheckout(checkout)}
+                      >
+                        {resumingId === checkout.external_subscription_id
+                          ? "Cancelando..."
+                          : "Tentar novamente"}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

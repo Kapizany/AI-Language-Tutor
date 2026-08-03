@@ -601,6 +601,221 @@ async def test_handle_webhook_subscription_updated_active_is_recorded_only() -> 
 
 
 @pytest.mark.asyncio
+async def test_billing_history_syncs_cancelled_payments_from_asaas() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+    patched: list[str] = []
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/billing_checkouts"):
+            if "status=eq.pending" in str(request.url):
+                return httpx.Response(
+                    200,
+                    request=request,
+                    json=[
+                        {
+                            "id": 9,
+                            "payment_method": "pix_automatic",
+                            "external_subscription_id": "pay_gone",
+                        }
+                    ],
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "id": 9,
+                        "billing_cycle": "monthly",
+                        "payment_method": "pix_automatic",
+                        "status": "cancelled",
+                        "external_subscription_id": "pay_gone",
+                        "created_at": "2026-08-02T12:00:00Z",
+                        "updated_at": "2026-08-03T12:00:00Z",
+                    }
+                ],
+            )
+        if request.method == "PATCH" and request.url.path.endswith("/billing_checkouts"):
+            patched.append("pay_gone")
+            return httpx.Response(204, request=request)
+        if request.url.path.endswith("/user_subscriptions"):
+            return httpx.Response(200, request=request, json=[])
+        if request.url.path.endswith("/billing_events"):
+            return httpx.Response(200, request=request, json=[])
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(
+            lambda request: (
+                httpx.Response(404, request=request, text="not found")
+                if request.url.path.endswith("/payments/pay_gone")
+                else httpx.Response(500, request=request)
+            )
+        ),
+    )
+    try:
+        result = await service.get_billing_history(user_id=user_id)
+        assert patched == ["pay_gone"]
+        assert result["checkouts"][0]["status"] == "cancelled"
+        assert result["checkouts"][0]["can_resume"] is False
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_abandon_pending_card_checkout_cancels_asaas_and_local() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+
+    patched: list[str] = []
+    deleted: list[str] = []
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/billing_checkouts"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "id": 9,
+                        "billing_cycle": "annual",
+                        "payment_method": "card",
+                        "status": "pending",
+                        "external_subscription_id": "sub_stuck",
+                        "created_at": "2026-08-03T10:00:00Z",
+                    }
+                ],
+            )
+        if request.method == "PATCH" and request.url.path.endswith("/billing_checkouts"):
+            patched.append(request.content.decode())
+            return httpx.Response(204, request=request)
+        return httpx.Response(500, request=request)
+
+    def asaas_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE" and request.url.path.endswith("/subscriptions/sub_stuck"):
+            deleted.append(request.url.path)
+            return httpx.Response(200, request=request, json={"deleted": True})
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(asaas_handler),
+    )
+    try:
+        result = await service.abandon_pending_checkout(
+            user_id=user_id,
+            external_subscription_id="sub_stuck",
+        )
+        assert result["has_pending_checkout"] is False
+        assert result["checkout_status"] == "cancelled"
+        assert deleted == ["/v3/subscriptions/sub_stuck"]
+        assert patched
+        assert "cancelled" in patched[0]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_pending_checkout_returns_pix_qr() -> None:
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+
+    def db_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/billing_checkouts"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "id": 3,
+                        "billing_cycle": "monthly",
+                        "payment_method": "pix_automatic",
+                        "status": "pending",
+                        "external_subscription_id": "pay_live",
+                        "created_at": "2026-08-03T10:00:00Z",
+                    }
+                ],
+            )
+        return httpx.Response(500, request=request)
+
+    def asaas_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/payments/pay_live"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"id": "pay_live", "status": "PENDING"},
+            )
+        if request.url.path.endswith("/pixQrCode"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"encodedImage": "qr", "payload": "pix-copy"},
+            )
+        return httpx.Response(500, request=request)
+
+    service.db = httpx.AsyncClient(
+        base_url="https://example.supabase.co/rest/v1",
+        headers={"apikey": "service-role-key"},
+        transport=httpx.MockTransport(db_handler),
+    )
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(asaas_handler),
+    )
+    try:
+        result = await service.resume_pending_checkout(
+            user_id=user_id,
+            external_subscription_id="pay_live",
+        )
+        assert result["has_pending_checkout"] is True
+        assert result["pix_qr_code"] == "qr"
+        assert result["pix_copy_paste"] == "pix-copy"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_create_checkout_rejects_already_premium() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     service = BillingService(

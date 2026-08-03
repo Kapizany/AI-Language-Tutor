@@ -232,6 +232,85 @@ async def test_billing_history_requires_authentication() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_checkout_returns_pix_payload() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.resume_pending_checkout.return_value = {
+        "has_pending_checkout": True,
+        "payment_status": "pending",
+        "payment_method": "pix_automatic",
+        "billing_cycle": "monthly",
+        "amount": 2.00,
+        "currency": "BRL",
+        "external_subscription_id": "pay_777",
+        "pix_qr_code": "base64qr",
+        "pix_copy_paste": "000201010212",
+        "message": "Aguardando pagamento via PIX.",
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/checkout/resume",
+            json={"external_subscription_id": "pay_777"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["pix_qr_code"] == "base64qr"
+    billing.resume_pending_checkout.assert_awaited_once_with(
+        user_id=LEARNER_ID,
+        external_subscription_id="pay_777",
+    )
+
+
+@pytest.mark.asyncio
+async def test_abandon_checkout_cancels_pending() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.abandon_pending_checkout.return_value = {
+        "has_pending_checkout": False,
+        "checkout_status": "cancelled",
+        "payment_status": "canceled",
+        "payment_method": "card",
+        "billing_cycle": "annual",
+        "amount": 2.00,
+        "currency": "BRL",
+        "external_subscription_id": "sub_123",
+        "message": "Cobrança cancelada.",
+    }
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/checkout/abandon",
+            json={"external_subscription_id": "sub_123"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["has_pending_checkout"] is False
+    billing.abandon_pending_checkout.assert_awaited_once_with(
+        user_id=LEARNER_ID,
+        external_subscription_id="sub_123",
+    )
+
+
+@pytest.mark.asyncio
 async def test_billing_history_returns_checkouts_and_events() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.get_billing_history.return_value = {

@@ -210,6 +210,7 @@ h1, h2, h3, .brand { font-family: var(--font-manrope), Manrope, sans-serif; }
 .billing-history-list li{padding:12px;border:1px solid var(--line);border-radius:12px;background:white}
 .billing-history-item-main{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
 .billing-history-item-meta{display:flex;flex-wrap:wrap;gap:10px;color:var(--muted);font-size:12px}
+.billing-history-item-actions{margin-top:10px}
 .billing-history-badge{padding:3px 8px;border-radius:999px;background:var(--amber-soft);color:#8d651d;font-size:10px;font-weight:800}
 .billing-history-badge-authorized,.billing-history-badge-confirmed{background:#e7f6ef;color:#176644}
 .billing-history-badge-cancelled,.billing-history-badge-failed{background:#fdecec;color:#9b2c2c}

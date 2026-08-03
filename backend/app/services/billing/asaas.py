@@ -481,9 +481,9 @@ class BillingService:
         if payment_status == "confirmed":
             return "Pagamento confirmado."
         if payment_status == "overdue":
-            return "Pagamento vencido. Gere um novo PIX para continuar."
+            return "Pagamento vencido. Tente novamente com um novo pagamento."
         if payment_status == "canceled":
-            return "Pagamento cancelado."
+            return "Pagamento cancelado. Você pode tentar novamente."
         if payment_method == "pix_automatic":
             return (
                 "Aguardando pagamento via PIX. Escaneie o QR code ou copie o código "
@@ -495,6 +495,7 @@ class BillingService:
         if not self.enabled and not self.mock_checkout:
             raise BillingNotConfiguredError("Asaas billing is not configured")
 
+        await self._sync_pending_checkouts(user_id=user_id)
         subscription = await self._load_user_subscription(user_id=user_id)
         if subscription:
             plan_id = str(subscription.get("plan_id") or "free")
@@ -542,15 +543,62 @@ class BillingService:
                 ),
             }
 
-        if payment_method == "pix_automatic":
-            payment = await self._asaas_request("GET", f"/payments/{external_id}")
-        else:
-            payment_list = await self._asaas_request(
-                "GET",
-                f"/subscriptions/{external_id}/payments?limit=1",
-            )
-            data = payment_list.get("data")
-            payment = data[0] if isinstance(data, list) and data else {}
+        try:
+            if payment_method == "pix_automatic":
+                payment = await self._asaas_request("GET", f"/payments/{external_id}")
+            else:
+                subscription = await self._asaas_request("GET", f"/subscriptions/{external_id}")
+                sub_status = str(subscription.get("status") or "").upper()
+                if sub_status in {"INACTIVE", "EXPIRED", "DELETED"}:
+                    if checkout and checkout.get("id") is not None:
+                        await self._update_checkout_status(
+                            checkout_id=checkout["id"],
+                            status="cancelled",
+                        )
+                    return {
+                        "has_pending_checkout": False,
+                        "checkout_status": "cancelled",
+                        "payment_status": "canceled",
+                        "payment_method": payment_method,
+                        "billing_cycle": billing_cycle,
+                        "amount": amount,
+                        "currency": "BRL",
+                        "external_subscription_id": external_id,
+                        "checkout_created_at": checkout_created_at,
+                        "message": self._checkout_status_message(
+                            payment_method=payment_method,
+                            payment_status="canceled",
+                        ),
+                    }
+                payment_list = await self._asaas_request(
+                    "GET",
+                    f"/subscriptions/{external_id}/payments?limit=1",
+                )
+                data = payment_list.get("data")
+                payment = data[0] if isinstance(data, list) and data else {}
+        except BillingProviderError as exc:
+            if exc.status_code == 404:
+                if checkout and checkout.get("id") is not None:
+                    await self._update_checkout_status(
+                        checkout_id=checkout["id"],
+                        status="cancelled",
+                    )
+                return {
+                    "has_pending_checkout": False,
+                    "checkout_status": "cancelled",
+                    "payment_status": "canceled",
+                    "payment_method": payment_method,
+                    "billing_cycle": billing_cycle,
+                    "amount": amount,
+                    "currency": "BRL",
+                    "external_subscription_id": external_id,
+                    "checkout_created_at": checkout_created_at,
+                    "message": self._checkout_status_message(
+                        payment_method=payment_method,
+                        payment_status="canceled",
+                    ),
+                }
+            raise
 
         provider_status = str(payment.get("status") or "").upper()
         mapped = self._map_payment_status(provider_status)
@@ -585,10 +633,21 @@ class BillingService:
                 "message": "Pagamento confirmado. Ativando Premium...",
             }
 
-        if mapped in {"canceled", "overdue"} or provider_status in {"REFUNDED", "DELETED"}:
+        if mapped in {"canceled", "overdue", "failed"} or provider_status in {
+            "REFUNDED",
+            "DELETED",
+        }:
+            local_status = "failed" if mapped in {"overdue", "failed"} else "cancelled"
+            payment_status = "overdue" if mapped == "overdue" else "canceled"
+            if checkout and checkout.get("id") is not None:
+                await self._update_checkout_status(
+                    checkout_id=checkout["id"],
+                    status=local_status,
+                )
             return {
                 "has_pending_checkout": False,
-                "payment_status": mapped,
+                "checkout_status": local_status,
+                "payment_status": payment_status,
                 "payment_method": payment_method,
                 "billing_cycle": billing_cycle,
                 "amount": amount,
@@ -597,7 +656,7 @@ class BillingService:
                 "checkout_created_at": checkout_created_at,
                 "message": self._checkout_status_message(
                     payment_method=payment_method,
-                    payment_status=mapped,
+                    payment_status=payment_status,
                 ),
             }
 
@@ -762,15 +821,26 @@ class BillingService:
     @staticmethod
     def _map_payment_status(status: str) -> str:
         normalized = status.upper()
-        if normalized in {"CONFIRMED", "RECEIVED"}:
-            return normalized.lower()
+        if not normalized:
+            return "pending"
+        if normalized in {"CONFIRMED", "RECEIVED", "RECEIVED_IN_CASH"}:
+            return "confirmed" if normalized == "CONFIRMED" else "received"
         if normalized in {"PENDING", "AWAITING_RISK_ANALYSIS"}:
             return "pending"
         if normalized in {"OVERDUE"}:
             return "overdue"
-        if normalized in {"REFUNDED", "CANCELLED", "DELETED"}:
+        if normalized in {
+            "REFUNDED",
+            "CANCELLED",
+            "CANCELED",
+            "DELETED",
+            "CHARGEBACK_REQUESTED",
+            "CHARGEBACK_DISPUTE",
+            "REFUND_REQUESTED",
+            "REFUND_IN_PROGRESS",
+        }:
             return "canceled"
-        return normalized.lower()
+        return "failed"
 
     async def _process_provider_status(
         self,
@@ -923,7 +993,296 @@ class BillingService:
 
         return user_id, billing_cycle, payment_method, provider_status
 
+    async def _update_checkout_status(self, *, checkout_id: Any, status: str) -> None:
+        try:
+            response = await self.db.patch(
+                "/billing_checkouts",
+                params={"id": f"eq.{checkout_id}"},
+                json={"status": status, "updated_at": datetime.now(tz=UTC).isoformat()},
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not update checkout status") from exc
+        if response.status_code >= 400:
+            raise BillingServiceError("Could not update checkout status")
+
+    @staticmethod
+    def _checkout_status_from_asaas_payment(status: str) -> str:
+        mapped = BillingService._map_payment_status(status)
+        if mapped in {"confirmed", "received"}:
+            return "authorized"
+        if mapped in {"canceled", "overdue"}:
+            return "cancelled" if mapped == "canceled" else "failed"
+        if mapped == "pending":
+            return "pending"
+        return "failed"
+
+    async def _lookup_asaas_checkout_status(
+        self,
+        *,
+        external_id: str,
+        payment_method: str | None,
+    ) -> str | None:
+        """Return local checkout status based on live Asaas resource, or None if unknown."""
+        if not external_id or external_id.startswith("mock:"):
+            return None
+        try:
+            if payment_method == "pix_automatic" or external_id.startswith("pay_"):
+                payment = await self._asaas_request("GET", f"/payments/{external_id}")
+                return self._checkout_status_from_asaas_payment(str(payment.get("status") or ""))
+            subscription = await self._asaas_request("GET", f"/subscriptions/{external_id}")
+            sub_status = str(subscription.get("status") or "").upper()
+            if sub_status in {"INACTIVE", "EXPIRED", "DELETED"}:
+                return "cancelled"
+            payments = await self._asaas_request(
+                "GET",
+                f"/subscriptions/{external_id}/payments?limit=1",
+            )
+            data = payments.get("data")
+            if isinstance(data, list) and data and isinstance(data[0], dict):
+                return self._checkout_status_from_asaas_payment(str(data[0].get("status") or ""))
+            if sub_status == "ACTIVE":
+                return "pending"
+            return "failed"
+        except BillingProviderError as exc:
+            # Deleted resources commonly return 404 on Asaas.
+            if exc.status_code == 404:
+                return "cancelled"
+            return None
+        except BillingServiceError:
+            return None
+
+    async def _sync_pending_checkouts(self, *, user_id: UUID) -> None:
+        if not self.enabled:
+            return
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "status": "eq.pending",
+                    "select": "id,payment_method,external_subscription_id",
+                    "order": "created_at.desc",
+                    "limit": "10",
+                },
+            )
+        except httpx.HTTPError:
+            return
+        if response.status_code >= 400:
+            return
+        rows = response.json()
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            external_id = str(row.get("external_subscription_id") or "")
+            next_status = await self._lookup_asaas_checkout_status(
+                external_id=external_id,
+                payment_method=str(row.get("payment_method") or "") or None,
+            )
+            if next_status and next_status != "pending" and row.get("id") is not None:
+                try:
+                    await self._update_checkout_status(checkout_id=row["id"], status=next_status)
+                except BillingServiceError:
+                    logger.exception(
+                        "Could not sync checkout status from Asaas",
+                        extra={
+                            "operation": "checkout_sync",
+                            "provider": PROVIDER,
+                            "checkout_id": row.get("id"),
+                        },
+                    )
+
+    async def resume_pending_checkout(
+        self,
+        *,
+        user_id: UUID,
+        external_subscription_id: str,
+    ) -> dict[str, Any]:
+        if not self.enabled and not self.mock_checkout:
+            raise BillingNotConfiguredError("Asaas billing is not configured")
+
+        external_id = external_subscription_id.strip()
+        if not external_id:
+            raise BillingValidationError("Informe o identificador da cobrança.")
+
+        try:
+            response = await self.db.get(
+                "/billing_checkouts",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "external_subscription_id": f"eq.{external_id}",
+                    "select": (
+                        "id,billing_cycle,payment_method,status,external_subscription_id,created_at"
+                    ),
+                    "limit": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise BillingServiceError("Could not load checkout") from exc
+        if response.status_code >= 400:
+            raise BillingServiceError("Could not load checkout")
+        rows = response.json()
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            raise BillingSubscriptionNotFoundError("Checkout was not found")
+
+        checkout = rows[0]
+        payment_method = str(checkout.get("payment_method") or "pix_automatic")
+        cycle = str(checkout.get("billing_cycle") or "monthly")
+        billing_cycle: BillingCycle = "annual" if cycle == "annual" else "monthly"
+        amount = float(PRICING[billing_cycle]["amount"])
+
+        live_status = await self._lookup_asaas_checkout_status(
+            external_id=external_id,
+            payment_method=payment_method,
+        )
+        if live_status and live_status != "pending" and checkout.get("id") is not None:
+            await self._update_checkout_status(checkout_id=checkout["id"], status=live_status)
+            return {
+                "has_pending_checkout": False,
+                "checkout_status": live_status,
+                "payment_status": "canceled" if live_status == "cancelled" else live_status,
+                "payment_method": payment_method,
+                "billing_cycle": billing_cycle,
+                "amount": amount,
+                "currency": "BRL",
+                "external_subscription_id": external_id,
+                "checkout_created_at": checkout.get("created_at"),
+                "message": (
+                    "Esta cobrança não está mais disponível para pagamento. "
+                    "Gere uma nova assinatura se quiser continuar."
+                ),
+            }
+
+        if str(checkout.get("status") or "") != "pending" and live_status != "pending":
+            raise BillingValidationError("Esta cobrança não está pendente.")
+
+        pix_qr_code: str | None = None
+        pix_copy_paste: str | None = None
+        if payment_method == "pix_automatic":
+            pix_qr_code, pix_copy_paste = await self._fetch_pix_qr_fields(payment_id=external_id)
+
+        return {
+            "has_pending_checkout": True,
+            "checkout_status": "pending",
+            "payment_status": "pending",
+            "payment_method": payment_method,
+            "billing_cycle": billing_cycle,
+            "amount": amount,
+            "currency": "BRL",
+            "external_subscription_id": external_id,
+            "pix_qr_code": pix_qr_code,
+            "pix_copy_paste": pix_copy_paste,
+            "checkout_created_at": checkout.get("created_at"),
+            "message": self._checkout_status_message(
+                payment_method=payment_method,
+                payment_status="pending",
+            ),
+        }
+
+    async def _cancel_asaas_checkout_resource(
+        self,
+        *,
+        external_id: str,
+        payment_method: str,
+    ) -> None:
+        if not external_id or external_id.startswith("mock:"):
+            return
+        try:
+            if payment_method == "pix_automatic" or external_id.startswith("pay_"):
+                await self._asaas_request("DELETE", f"/payments/{external_id}")
+            else:
+                await self._asaas_request("DELETE", f"/subscriptions/{external_id}")
+        except BillingProviderError as exc:
+            # Already deleted/cancelled on Asaas is fine for local abandon.
+            if exc.status_code != 404:
+                logger.warning(
+                    "Could not cancel Asaas checkout resource during abandon",
+                    extra={
+                        "operation": "checkout_abandon",
+                        "provider": PROVIDER,
+                        "external_subscription_id": external_id,
+                        "status_code": exc.status_code,
+                    },
+                )
+
+    async def abandon_pending_checkout(
+        self,
+        *,
+        user_id: UUID,
+        external_subscription_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not self.enabled and not self.mock_checkout:
+            raise BillingNotConfiguredError("Asaas billing is not configured")
+
+        external_filter = (external_subscription_id or "").strip()
+        if external_filter:
+            try:
+                response = await self.db.get(
+                    "/billing_checkouts",
+                    params={
+                        "user_id": f"eq.{user_id}",
+                        "external_subscription_id": f"eq.{external_filter}",
+                        "select": (
+                            "id,billing_cycle,payment_method,status,"
+                            "external_subscription_id,created_at"
+                        ),
+                        "limit": "1",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise BillingServiceError("Could not load checkout") from exc
+            if response.status_code >= 400:
+                raise BillingServiceError("Could not load checkout")
+            rows = response.json()
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                checkout = rows[0]
+            else:
+                checkout = None
+        else:
+            checkout = await self._load_latest_pending_checkout(user_id=user_id)
+
+        if not checkout:
+            return {
+                "has_pending_checkout": False,
+                "message": "Nenhuma cobrança pendente para cancelar.",
+            }
+
+        if str(checkout.get("status") or "") != "pending":
+            raise BillingValidationError("Esta cobrança não está pendente.")
+
+        external_id = str(checkout.get("external_subscription_id") or "")
+        payment_method = str(checkout.get("payment_method") or "card")
+        cycle = str(checkout.get("billing_cycle") or "monthly")
+        billing_cycle: BillingCycle = "annual" if cycle == "annual" else "monthly"
+        amount = float(PRICING[billing_cycle]["amount"])
+
+        if self.enabled:
+            await self._cancel_asaas_checkout_resource(
+                external_id=external_id,
+                payment_method=payment_method,
+            )
+
+        if checkout.get("id") is not None:
+            await self._update_checkout_status(checkout_id=checkout["id"], status="cancelled")
+
+        return {
+            "has_pending_checkout": False,
+            "checkout_status": "cancelled",
+            "payment_status": "canceled",
+            "payment_method": payment_method,
+            "billing_cycle": billing_cycle,
+            "amount": amount,
+            "currency": "BRL",
+            "external_subscription_id": external_id or None,
+            "checkout_created_at": checkout.get("created_at"),
+            "message": (
+                "Cobrança cancelada. Preencha os dados novamente para tentar um novo pagamento."
+            ),
+        }
+
     async def get_billing_history(self, *, user_id: UUID) -> dict[str, Any]:
+        await self._sync_pending_checkouts(user_id=user_id)
         subscription = await self._load_user_subscription(user_id=user_id)
 
         try:
@@ -969,17 +1328,24 @@ class BillingService:
                 cycle = str(row.get("billing_cycle") or "monthly")
                 cycle_key: BillingCycle = "annual" if cycle == "annual" else "monthly"
                 pricing = PRICING[cycle_key]
+                status = str(row.get("status") or "")
+                payment_method = row.get("payment_method")
                 checkouts.append(
                     {
                         "id": row.get("id"),
                         "billing_cycle": cycle,
-                        "payment_method": row.get("payment_method"),
-                        "status": row.get("status"),
+                        "payment_method": payment_method,
+                        "status": status,
                         "external_subscription_id": row.get("external_subscription_id"),
                         "amount": float(pricing["amount"]),
                         "currency": "BRL",
                         "created_at": row.get("created_at"),
                         "updated_at": row.get("updated_at"),
+                        "can_resume": status == "pending"
+                        and payment_method == "pix_automatic"
+                        and bool(row.get("external_subscription_id")),
+                        "can_retry": status == "pending"
+                        and bool(row.get("external_subscription_id")),
                     }
                 )
 

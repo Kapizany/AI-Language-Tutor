@@ -68,6 +68,8 @@ export type BillingCheckoutHistoryItem = {
   currency?: string;
   created_at?: string | null;
   updated_at?: string | null;
+  can_resume?: boolean;
+  can_retry?: boolean;
 };
 
 export type BillingEventHistoryItem = {
@@ -110,6 +112,30 @@ export async function subscribeCheckout(
 
 export async function loadCheckoutStatus(accessToken: string) {
   return apiRequest<CheckoutStatus>("/api/v1/billing/checkout/status", { accessToken });
+}
+
+export async function resumePendingCheckout(
+  accessToken: string,
+  externalSubscriptionId: string,
+) {
+  return apiRequest<CheckoutStatus>("/api/v1/billing/checkout/resume", {
+    accessToken,
+    method: "POST",
+    body: { external_subscription_id: externalSubscriptionId },
+  });
+}
+
+export async function abandonPendingCheckout(
+  accessToken: string,
+  externalSubscriptionId?: string | null,
+) {
+  return apiRequest<CheckoutStatus>("/api/v1/billing/checkout/abandon", {
+    accessToken,
+    method: "POST",
+    body: {
+      external_subscription_id: externalSubscriptionId || undefined,
+    },
+  });
 }
 
 export async function refreshBillingSubscription(accessToken: string) {

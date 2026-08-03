@@ -24,8 +24,8 @@ async def test_billing_plans_are_public() -> None:
         response = await client.get("/api/v1/billing/plans")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["plans"]["monthly"]["amount"] == 2.00
-    assert payload["plans"]["annual"]["amount"] == 2.00
+    assert payload["plans"]["monthly"]["amount"] == 5.00
+    assert payload["plans"]["annual"]["amount"] == 5.00
     assert "card" in payload["payment_methods"]
     assert "pix_automatic" in payload["payment_methods"]
 
@@ -55,7 +55,7 @@ async def test_checkout_status_returns_pending_pix() -> None:
         "payment_status": "pending",
         "payment_method": "pix_automatic",
         "billing_cycle": "monthly",
-        "amount": 2.00,
+        "amount": 5.00,
         "currency": "BRL",
         "external_subscription_id": "pay_777",
         "pix_qr_code": "base64qr",
@@ -114,7 +114,7 @@ async def test_checkout_subscribe_returns_pending_status() -> None:
         "status": "pending",
         "payment_method": "card",
         "external_subscription_id": "sub_abc",
-        "amount": 2.00,
+        "amount": 5.00,
         "currency": "BRL",
         "billing_cycle": "monthly",
         "message": "Aguardando confirmação.",
@@ -151,7 +151,7 @@ async def test_checkout_subscribe_returns_pending_status() -> None:
     payload = response.json()
     assert payload["status"] == "pending"
     assert payload["external_subscription_id"] == "sub_abc"
-    assert payload["amount"] == 2.00
+    assert payload["amount"] == 5.00
     billing.create_subscription_checkout.assert_awaited_once()
 
 
@@ -159,7 +159,7 @@ async def test_checkout_subscribe_returns_pending_status() -> None:
 async def test_checkout_subscribe_returns_provider_error_without_internal_details() -> None:
     billing = AsyncMock(spec=BillingService)
     billing.create_subscription_checkout.side_effect = BillingProviderError(
-        "Asaas request failed",
+        "Asaas request failed: internal upstream details",
         status_code=500,
     )
 
@@ -185,6 +185,52 @@ async def test_checkout_subscribe_returns_provider_error_without_internal_detail
 
     assert response.status_code == 502
     assert "Asaas request failed" not in response.json()["detail"]
+    assert "internal upstream details" not in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_checkout_subscribe_returns_mapped_asaas_client_error() -> None:
+    billing = AsyncMock(spec=BillingService)
+    billing.create_subscription_checkout.side_effect = BillingProviderError(
+        "Asaas request failed: raw body",
+        status_code=400,
+        error_codes=["invalid_object"],
+        provider_messages=[
+            "O valor da cobrança (R$ 2,00) menos o valor do desconto (R$ 0,00) "
+            "não pode ser menor que R$ 5,00."
+        ],
+        user_message=(
+            "O valor da cobrança está abaixo do mínimo permitido (R$ 5,00). "
+            "Atualize o valor do plano e tente novamente."
+        ),
+        is_client_error=True,
+        method="POST",
+        path="/payments",
+    )
+
+    async def configured_billing() -> BillingService:
+        return billing
+
+    app.dependency_overrides[get_current_user] = learner_user
+    app.dependency_overrides[get_billing_service] = configured_billing
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer token"},
+    ) as client:
+        response = await client.post(
+            "/api/v1/billing/checkout/subscribe",
+            json={
+                "billing_cycle": "annual",
+                "payment_method": "pix_automatic",
+                "cpf": "32502129893",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert "mínimo permitido" in response.json()["detail"]
+    assert "raw body" not in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -239,7 +285,7 @@ async def test_resume_checkout_returns_pix_payload() -> None:
         "payment_status": "pending",
         "payment_method": "pix_automatic",
         "billing_cycle": "monthly",
-        "amount": 2.00,
+        "amount": 5.00,
         "currency": "BRL",
         "external_subscription_id": "pay_777",
         "pix_qr_code": "base64qr",
@@ -280,7 +326,7 @@ async def test_abandon_checkout_cancels_pending() -> None:
         "payment_status": "canceled",
         "payment_method": "card",
         "billing_cycle": "annual",
-        "amount": 2.00,
+        "amount": 5.00,
         "currency": "BRL",
         "external_subscription_id": "sub_123",
         "message": "Cobrança cancelada.",

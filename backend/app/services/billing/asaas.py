@@ -46,6 +46,86 @@ WEBHOOK_EVENT_STATUS: dict[str, str] = {
     "SUBSCRIPTION_DELETED": "canceled",
 }
 PAID_ASAAS_STATUSES = frozenset({"CONFIRMED", "RECEIVED"})
+ASAAS_CLIENT_ERROR_CODES = frozenset(
+    {
+        "invalid_object",
+        "invalid_customer",
+        "invalid_cpfCnpj",
+        "invalid_creditCard",
+        "invalid_creditCardNumber",
+        "invalid_creditCardHolderInfo",
+        "invalid_creditCardToken",
+        "invalid_billingType",
+        "invalid_value",
+        "invalid_dueDate",
+        "invalid_action",
+    }
+)
+
+
+def _safe_asaas_description(description: str) -> str | None:
+    text = description.strip()
+    if not text or len(text) > 220:
+        return None
+    lowered = text.lower()
+    if any(token in lowered for token in ("access_token", "api key", "traceback", "stack")):
+        return None
+    return text
+
+
+def map_asaas_errors_for_user(
+    *,
+    status_code: int,
+    errors: list[dict[str, str]],
+) -> tuple[str | None, bool]:
+    """Return (user_message, is_client_error) from Asaas error payloads."""
+    codes = [str(item.get("code") or "") for item in errors if item.get("code")]
+    descriptions = [
+        str(item.get("description") or "") for item in errors if item.get("description")
+    ]
+
+    for description in descriptions:
+        lowered = description.lower()
+        if "não pode ser menor que" in lowered or "nao pode ser menor que" in lowered:
+            return (
+                "O valor da cobrança está abaixo do mínimo permitido (R$ 5,00). "
+                "Atualize o valor do plano e tente novamente.",
+                True,
+            )
+        if "cpf" in lowered and ("inválid" in lowered or "invalid" in lowered):
+            return ("Informe um CPF válido.", True)
+        if "cartão" in lowered or "cartao" in lowered or "credit card" in lowered:
+            return (
+                "Não foi possível validar o cartão. Confira os dados e tente novamente.",
+                True,
+            )
+
+    if "invalid_cpfCnpj" in codes:
+        return ("Informe um CPF válido.", True)
+    if any(code.startswith("invalid_creditCard") for code in codes):
+        return (
+            "Não foi possível validar o cartão. Confira os dados e tente novamente.",
+            True,
+        )
+    if "invalid_customer" in codes:
+        return (
+            "Não foi possível validar os dados do pagador. Verifique o CPF e tente novamente.",
+            True,
+        )
+
+    is_client_error = status_code < 500 and any(code in ASAAS_CLIENT_ERROR_CODES for code in codes)
+    if is_client_error:
+        for description in descriptions:
+            safe = _safe_asaas_description(description)
+            if safe:
+                return (safe, True)
+        return (
+            "Não foi possível processar o pagamento com os dados informados. "
+            "Revise e tente novamente.",
+            True,
+        )
+
+    return (None, False)
 
 
 class BillingService:
@@ -197,9 +277,58 @@ class BillingService:
         except httpx.HTTPError as exc:
             raise BillingServiceError("Asaas transport failed") from exc
         if response.status_code >= 400:
-            raise BillingProviderError(
-                f"Asaas request failed: {response.text[:300]}",
+            body_preview = response.text[:500]
+            parsed_errors: list[dict[str, str]] = []
+            try:
+                error_payload = response.json()
+                raw_errors = (
+                    error_payload.get("errors") if isinstance(error_payload, dict) else None
+                )
+                if isinstance(raw_errors, list):
+                    for item in raw_errors:
+                        if not isinstance(item, dict):
+                            continue
+                        parsed_errors.append(
+                            {
+                                "code": str(item.get("code") or ""),
+                                "description": str(item.get("description") or ""),
+                            }
+                        )
+            except ValueError:
+                parsed_errors = []
+
+            error_codes = [item["code"] for item in parsed_errors if item["code"]]
+            provider_messages = [
+                item["description"] for item in parsed_errors if item["description"]
+            ]
+            user_message, is_client_error = map_asaas_errors_for_user(
                 status_code=response.status_code,
+                errors=parsed_errors,
+            )
+            logger.warning(
+                "Asaas request failed",
+                extra={
+                    "operation": "asaas_request",
+                    "provider": PROVIDER,
+                    "method": method,
+                    "path": path,
+                    "status_code": response.status_code,
+                    "error_codes": error_codes,
+                    "provider_messages": provider_messages,
+                    "user_message": user_message,
+                    "is_client_error": is_client_error,
+                    "response_preview": body_preview,
+                },
+            )
+            raise BillingProviderError(
+                f"Asaas request failed: {body_preview}",
+                status_code=response.status_code,
+                error_codes=error_codes,
+                provider_messages=provider_messages,
+                user_message=user_message,
+                is_client_error=is_client_error,
+                method=method,
+                path=path,
             )
         try:
             body = response.json()

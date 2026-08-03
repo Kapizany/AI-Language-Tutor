@@ -57,7 +57,7 @@ def _raise_billing_http_error(
         ) from exc
     if isinstance(exc, BillingValidationError):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     if isinstance(exc, AlreadyPremiumError):
@@ -82,8 +82,32 @@ def _raise_billing_http_error(
             detail = f"Muitas tentativas. Tente novamente em cerca de {minutes} min."
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail) from exc
     if isinstance(exc, BillingProviderError):
-        detail = "Não foi possível processar o pagamento agora. Tente novamente em alguns minutos."
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
+        logger.warning(
+            "Billing provider operation failed",
+            extra={
+                "operation": operation,
+                "provider": "asaas",
+                "billing_cycle": billing_cycle,
+                "error_type": type(exc).__name__,
+                "status_code": exc.status_code,
+                "error_codes": exc.error_codes,
+                "provider_messages": exc.provider_messages,
+                "user_message": exc.user_message,
+                "is_client_error": exc.is_client_error,
+                "method": exc.method,
+                "path": exc.path,
+            },
+        )
+        detail = (
+            exc.user_message
+            or "Não foi possível processar o pagamento agora. Tente novamente em alguns minutos."
+        )
+        http_status = (
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+            if exc.is_client_error
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=http_status, detail=detail) from exc
     if isinstance(exc, BillingServiceError):
         logger.exception(
             "Billing operation failed",

@@ -8,9 +8,87 @@ from app.core.config import Settings
 from app.services.billing import (
     PRICING,
     AlreadyPremiumError,
+    BillingProviderError,
     BillingService,
     BillingValidationError,
+    map_asaas_errors_for_user,
 )
+
+
+def test_map_asaas_errors_for_user_maps_minimum_charge() -> None:
+    message, is_client_error = map_asaas_errors_for_user(
+        status_code=400,
+        errors=[
+            {
+                "code": "invalid_object",
+                "description": (
+                    "O valor da cobrança (R$ 2,00) menos o valor do desconto (R$ 0,00) "
+                    "não pode ser menor que R$ 5,00."
+                ),
+            }
+        ],
+    )
+    assert is_client_error is True
+    assert message is not None
+    assert "R$ 5,00" in message
+
+
+def test_map_asaas_errors_for_user_keeps_unknown_server_errors_generic() -> None:
+    message, is_client_error = map_asaas_errors_for_user(
+        status_code=500,
+        errors=[{"code": "unknown", "description": "Falha interna"}],
+    )
+    assert is_client_error is False
+    assert message is None
+
+
+@pytest.mark.asyncio
+async def test_asaas_request_raises_structured_provider_error() -> None:
+    service = BillingService(
+        Settings(
+            _env_file=None,
+            asaas_billing_enabled=True,
+            asaas_api_key="asaas-key",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role-key",
+        )
+    )
+    await service.db.aclose()
+    await service.asaas.aclose()
+
+    def asaas_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            request=request,
+            json={
+                "errors": [
+                    {
+                        "code": "invalid_object",
+                        "description": (
+                            "O valor da cobrança (R$ 2,00) menos o valor do desconto "
+                            "(R$ 0,00) não pode ser menor que R$ 5,00."
+                        ),
+                    }
+                ]
+            },
+        )
+
+    service.asaas = httpx.AsyncClient(
+        base_url="https://api-sandbox.asaas.com/v3",
+        transport=httpx.MockTransport(asaas_handler),
+    )
+    try:
+        with pytest.raises(BillingProviderError) as raised:
+            await service._asaas_request("POST", "/payments", json={"value": 2})
+        exc = raised.value
+        assert exc.status_code == 400
+        assert exc.is_client_error is True
+        assert exc.error_codes == ["invalid_object"]
+        assert exc.user_message is not None
+        assert "mínimo permitido" in exc.user_message
+        assert exc.path == "/payments"
+    finally:
+        await service.close()
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-from app.services.billing.asaas import BillingService
+from app.services.billing.asaas import BillingService, map_asaas_errors_for_user
 from app.services.billing.exceptions import (
     AlreadyPremiumError,
     BillingNotConfiguredError,
@@ -24,4 +24,5 @@ __all__ = [
     "BillingValidationError",
     "PRICING",
     "PaymentMethod",
+    "map_asaas_errors_for_user",
 ]

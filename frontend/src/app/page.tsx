@@ -1450,9 +1450,11 @@ function LearningCenter({
   const completedReadings = learning.readings.filter(
     (item) => completedActivityIds.has(item.id),
   ).length;
-  const completedGrammarExercises = learning.grammarExercises.filter(
-    (item) => completedActivityIds.has(item.id),
-  ).length;
+  const completedGrammarTopics = learning.grammarTopics.filter((topic) => {
+    const topicExercises = learning.grammarExercises.filter((exercise) => exercise.topicId === topic.id);
+    return topicExercises.length > 0
+      && topicExercises.every((exercise) => completedActivityIds.has(exercise.id));
+  }).length;
   const grammarTopicComplete = Boolean(grammarExercises.length)
     && grammarExercises.every((exercise) => completedActivityIds.has(exercise.id));
 
@@ -1532,8 +1534,12 @@ function LearningCenter({
     setActivityIndex(nextIndex);
     setSelectedAnswer(null);
     setSaved(false);
-    setReadingQuestionIndex(section === "reading" ? cursor?.stepIndex || 0 : 0);
-    setReadingCorrectAnswers(section === "reading" ? cursor?.correctAnswers || 0 : 0);
+    setReadingQuestionIndex(
+      section === "reading" || section === "quick_lesson" ? cursor?.stepIndex || 0 : 0,
+    );
+    setReadingCorrectAnswers(
+      section === "reading" || section === "quick_lesson" ? cursor?.correctAnswers || 0 : 0,
+    );
     setGrammarView(
       section === "grammar" && cursor?.view === "exercises" ? "exercises" : "explanations",
     );
@@ -1653,17 +1659,53 @@ function LearningCenter({
     setGrammarExerciseIndex(0);
   };
 
+  const quickLessonQuestion = quickLessonActivity?.questions[readingQuestionIndex];
+
   const answerActivity = (index: number) => {
-    if (selectedAnswer !== null || !quickLessonActivity) return;
+    if (selectedAnswer !== null || !quickLessonActivity || !quickLessonQuestion) return;
+    const correctAnswers = readingCorrectAnswers + (index === quickLessonQuestion.answer ? 1 : 0);
     setSelectedAnswer(index);
-    void recordProgress(
-      quickLessonActivity.id,
-      "quick_lesson",
-      index === quickLessonActivity.answer ? 100 : 0,
-    );
-    if (index !== quickLessonActivity.answer) {
-      void recordMistake(quickLessonActivity.id, "quick_lesson", 0, index);
+    setReadingCorrectAnswers(correctAnswers);
+    if (index !== quickLessonQuestion.answer) {
+      void recordMistake(quickLessonActivity.id, "quick_lesson", readingQuestionIndex, index);
     }
+    if (readingQuestionIndex === quickLessonActivity.questions.length - 1) {
+      const score = Math.round((correctAnswers / quickLessonActivity.questions.length) * 100);
+      void recordProgress(quickLessonActivity.id, "quick_lesson", score);
+    } else {
+      void saveSectionCursor(
+        "quick_lesson",
+        level,
+        quickLessonActivity.id,
+        readingQuestionIndex,
+        correctAnswers,
+      );
+    }
+  };
+
+  const displayedQuickLessonCorrectAnswers = readingCorrectAnswers
+    + (
+      selectedAnswer !== null
+      && quickLessonQuestion
+      && selectedAnswer === quickLessonQuestion.answer
+        ? 1
+        : 0
+    );
+
+  const nextQuickLessonQuestion = () => {
+    if (!quickLessonActivity || readingQuestionIndex >= quickLessonActivity.questions.length - 1) {
+      return;
+    }
+    const nextIndex = readingQuestionIndex + 1;
+    setReadingQuestionIndex(nextIndex);
+    setSelectedAnswer(null);
+    void saveSectionCursor(
+      "quick_lesson",
+      level,
+      quickLessonActivity.id,
+      nextIndex,
+      readingCorrectAnswers,
+    );
   };
 
   const answerGrammarExercise = (index: number) => {
@@ -1835,12 +1877,12 @@ function LearningCenter({
           </header>
           <div className="catalog-sections">
             <article>
-              <div className="catalog-section-title"><span><Zap/></span><div><h3>Lições rápidas</h3><p>Textos curtos e uma pergunta para praticar em poucos minutos.</p></div><strong>{completedQuickLessons}/{learning.quickLessons.length}</strong></div>
+              <div className="catalog-section-title"><span><Zap/></span><div><h3>Lições rápidas</h3><p>Textos curtos com exercícios de completar alinhados ao conteúdo.</p></div><strong>{completedQuickLessons}/{learning.quickLessons.length}</strong></div>
               {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
                 const items = learning.quickLessons.filter((item) => item.level === catalogLevel);
                 return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.filter((item) => completedActivityIds.has(item.id)).length}/{items.length} concluídas</strong><ChevronRight/></summary><div>{items.map((item, index) => {
                   const completed = completedActivityIds.has(item.id);
-                  return <button key={item.id} className={completed ? "completed" : ""} disabled={completed} onClick={() => openCatalogItem("quick_lesson", catalogLevel, index)}><span>{completed ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{completed ? "Concluída" : item.question}</small></div>{!completed && <ArrowRight/>}</button>;
+                  return <button key={item.id} className={completed ? "completed" : ""} disabled={completed} onClick={() => openCatalogItem("quick_lesson", catalogLevel, index)}><span>{completed ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{completed ? "Concluída" : `${item.questions.length} exercícios`}</small></div>{!completed && <ArrowRight/>}</button>;
                 })}</div></details>;
               })}
             </article>
@@ -1857,13 +1899,20 @@ function LearningCenter({
             </article>
 
             <article>
-              <div className="catalog-section-title"><span><Languages/></span><div><h3>Gramática</h3><p>Explicações completas e exercícios organizados por tema.</p></div><strong>{completedGrammarExercises}/{learning.grammarExercises.length}</strong></div>
+              <div className="catalog-section-title"><span><Languages/></span><div><h3>Gramática</h3><p>Explicações completas e exercícios organizados por tema.</p></div><strong>{completedGrammarTopics}/{learning.grammarTopics.length}</strong></div>
               {(["A1", "A2", "B1", "B2"] as LearningLevel[]).map((catalogLevel) => {
                 const items = learning.grammarTopics.filter((item) => item.level === catalogLevel);
-                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{items.length} temas</strong><ChevronRight/></summary><div>{items.map((item, index) => {
-                  const exerciseCount = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id).length;
-                  const completedCount = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id && completedActivityIds.has(exercise.id)).length;
-                  return <button key={item.id} onClick={() => openCatalogItem("grammar", catalogLevel, index)}><span>{completedCount === exerciseCount ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{item.useCases.length} casos de uso · {completedCount}/{exerciseCount} exercícios</small></div><ArrowRight/></button>;
+                const completedTopicsInLevel = items.filter((topic) => {
+                  const topicExercises = learning.grammarExercises.filter((exercise) => exercise.topicId === topic.id);
+                  return topicExercises.length > 0
+                    && topicExercises.every((exercise) => completedActivityIds.has(exercise.id));
+                }).length;
+                return <details key={catalogLevel} open={catalogLevel === preferredLevel}><summary><span>{catalogLevel}</span><strong>{completedTopicsInLevel}/{items.length} concluídos</strong><ChevronRight/></summary><div>{items.map((item, index) => {
+                  const topicExercises = learning.grammarExercises.filter((exercise) => exercise.topicId === item.id);
+                  const exerciseCount = topicExercises.length;
+                  const completedCount = topicExercises.filter((exercise) => completedActivityIds.has(exercise.id)).length;
+                  const completed = exerciseCount > 0 && completedCount === exerciseCount;
+                  return <button key={item.id} className={completed ? "completed" : ""} disabled={completed} onClick={() => openCatalogItem("grammar", catalogLevel, index)}><span>{completed ? <Check/> : index + 1}</span><div><strong>{item.title}</strong><small>{completed ? "Concluído" : `${item.useCases.length} casos de uso · ${completedCount}/${exerciseCount} exercícios`}</small></div>{!completed && <ArrowRight/>}</button>;
                 })}</div></details>;
               })}
             </article>
@@ -1871,27 +1920,36 @@ function LearningCenter({
         </section>
       )}
 
-      {mode === "quick_lesson" && quickLessonActivity && (
+      {mode === "quick_lesson" && quickLessonActivity && quickLessonQuestion && (
           <article className="learning-activity">
             <div className="learning-activity-heading"><span className="level-chip">{level} · {languageDetails[language].name}</span><strong>{activityIndex + 1} de {activityCount}</strong></div>
             <h2>{quickLessonActivity.title}</h2>
             <p className="reading-text">{quickLessonActivity.text}</p>
-            <section className="learning-question">
-              <strong>{quickLessonActivity.question}</strong>
+            <section className="learning-question reading-comprehension">
+              <div className="reading-question-progress">
+                <strong>Exercício {readingQuestionIndex + 1} de {quickLessonActivity.questions.length}</strong>
+                <span>{readingCorrectAnswers} acerto{readingCorrectAnswers === 1 ? "" : "s"}</span>
+              </div>
+              <h3>{quickLessonQuestion.prompt}</h3>
               <div>
-                {quickLessonActivity.options.map((option, index) => {
+                {quickLessonQuestion.options.map((option, index) => {
                   const answered = selectedAnswer !== null;
                   const className = answered
-                    ? index === quickLessonActivity.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
+                    ? index === quickLessonQuestion.answer ? "correct" : index === selectedAnswer ? "wrong" : ""
                     : "";
-                  return <button key={option} className={className} onClick={() => answerActivity(index)} disabled={answered}>{option}{answered && index === quickLessonActivity.answer && <Check/>}</button>;
+                  return <button key={`${option}-${index}`} className={className} onClick={() => answerActivity(index)} disabled={answered}>{option}{answered && index === quickLessonQuestion.answer && <Check/>}</button>;
                 })}
               </div>
               {selectedAnswer !== null && (
-                <p className={selectedAnswer === quickLessonActivity.answer ? "answer-success" : "answer-error"}>
-                  {selectedAnswer === quickLessonActivity.answer ? "Muito bem! Resposta correta." : "Quase! Observe a resposta destacada e tente novamente depois."}
-                  {saved && " Progresso salvo."}
-                </p>
+                <div className="reading-feedback">
+                  <p className={selectedAnswer === quickLessonQuestion.answer ? "answer-success" : "answer-error"}>
+                    {selectedAnswer === quickLessonQuestion.answer ? "Muito bem! Resposta correta." : "Quase! Observe a resposta destacada e tente novamente depois."}
+                  </p>
+                  {quickLessonQuestion.explanation && <p>{quickLessonQuestion.explanation}</p>}
+                  {readingQuestionIndex < quickLessonActivity.questions.length - 1
+                    ? <Button onClick={nextQuickLessonQuestion} icon={<ArrowRight/>}>Próximo exercício</Button>
+                    : <strong>Lição concluída: {Math.round((displayedQuickLessonCorrectAnswers / quickLessonActivity.questions.length) * 100)}%{saved && " · progresso salvo"}</strong>}
+                </div>
               )}
             </section>
             <div className="learning-navigation">

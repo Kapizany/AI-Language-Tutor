@@ -3,15 +3,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type LearningLanguage = "en" | "es" | "fr" | "it";
 export type LearningLevel = "A1" | "A2" | "B1" | "B2";
 
+export type QuickLessonQuestion = {
+  prompt: string;
+  options: string[];
+  answer: number;
+  explanation: string;
+};
+
 export type QuickLessonActivity = {
   id: string;
   language: LearningLanguage;
   level: LearningLevel;
   title: string;
   text: string;
-  question: string;
-  options: string[];
-  answer: number;
+  questions: QuickLessonQuestion[];
 };
 
 export type ReadingQuestion = {
@@ -148,7 +153,7 @@ export async function loadLearningContent(
   ] = await Promise.all([
     supabase
       .from("quick_lessons")
-      .select("id,language,level,title,body,question,options,answer_index")
+      .select("id,language,level,title,body,question,options,answer_index,questions")
       .eq("language", language)
       .eq("is_published", true)
       .order("sort_order"),
@@ -186,16 +191,36 @@ export async function loadLearningContent(
   if (error) throw error;
 
   const content: LearningContent = {
-    quickLessons: (quickLessonsResult.data || []).map((row) => ({
-      id: row.id,
-      language: row.language as LearningLanguage,
-      level: row.level as LearningLevel,
-      title: row.title,
-      text: row.body,
-      question: row.question,
-      options: row.options as string[],
-      answer: row.answer_index,
-    })),
+    quickLessons: (quickLessonsResult.data || []).map((row) => {
+      const legacyQuestion = {
+        prompt: row.question as string,
+        options: row.options as string[],
+        answer: row.answer_index as number,
+        explanation: "",
+      };
+      const rawQuestions = row.questions as Array<{
+        prompt: string;
+        options: string[];
+        answer_index: number;
+        explanation_pt_br?: string;
+      }> | null;
+      const questions = rawQuestions && rawQuestions.length > 0
+        ? rawQuestions.map((question) => ({
+          prompt: question.prompt,
+          options: question.options,
+          answer: question.answer_index,
+          explanation: question.explanation_pt_br || "",
+        }))
+        : [legacyQuestion];
+      return {
+        id: row.id,
+        language: row.language as LearningLanguage,
+        level: row.level as LearningLevel,
+        title: row.title,
+        text: row.body,
+        questions,
+      };
+    }),
     readings: (readingsResult.data || []).map((row) => ({
       id: row.id,
       language: row.language as LearningLanguage,

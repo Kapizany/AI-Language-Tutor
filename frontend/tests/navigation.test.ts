@@ -91,6 +91,14 @@ test("migration contém o catálogo completo que será carregado do Supabase", (
     new URL("../../supabase/migrations/20260731123000_seed_reading_passages.sql", import.meta.url),
     "utf8",
   );
+  const readingClozeMigration = readFileSync(
+    new URL("../../supabase/migrations/20260803161000_text_aligned_reading_cloze.sql", import.meta.url),
+    "utf8",
+  );
+  const quickLessonClozeMigration = readFileSync(
+    new URL("../../supabase/migrations/20260803160000_topic_aligned_quick_lesson_cloze.sql", import.meta.url),
+    "utf8",
+  );
   const grammarTopicsMigration = readFileSync(
     new URL("../../supabase/migrations/20260731125000_seed_grammar_topics.sql", import.meta.url),
     "utf8",
@@ -110,15 +118,44 @@ test("migration contém o catálogo completo que será carregado do Supabase", (
       || row.startsWith(`('es-passage-${level}-`)
       || row.startsWith(`('fr-passage-${level}-`)
       || row.startsWith(`('it-passage-${level}-`));
-    const expectedQuestions = { a1: 3, a2: 4, b1: 5, b2: 7 }[level] || 0;
     assert.equal(rows.length, 40);
     rows.forEach((row) => {
-      assert.equal(row.match(/"prompt":/g)?.length, expectedQuestions);
       if (level === "b1" || level === "b2") {
         assert.ok((row.match(/\n\n/g)?.length || 0) >= 4);
       }
     });
   }
+
+  assert.equal(
+    (readingClozeMigration.match(/update public\.reading_passages set/g) || []).length,
+    160,
+  );
+  assert.match(readingClozeMigration, /A1=3, A2=4, B1=6, B2=8/);
+  assert.ok((readingClozeMigration.match(/___/g) || []).length >= 840);
+  assert.ok((readingClozeMigration.match(/"prompt": "Complete:/g) || []).length >= 840);
+
+  for (const [level, count] of [["a1", 3], ["a2", 4], ["b1", 6], ["b2", 8]] as const) {
+    const levelUpdates = [...readingClozeMigration.matchAll(
+      new RegExp(`where id = '(?:en|es|fr|it)-passage-${level}-\\d+'`, "g"),
+    )];
+    assert.equal(levelUpdates.length, 40);
+    const sampleId = `en-passage-${level}-01`;
+    const sampleIndex = readingClozeMigration.indexOf(`where id = '${sampleId}'`);
+    assert.ok(sampleIndex > 0);
+    const assignmentStart = readingClozeMigration.lastIndexOf("questions = '", sampleIndex);
+    assert.ok(assignmentStart > 0 && assignmentStart < sampleIndex);
+    const sampleBlock = readingClozeMigration.slice(assignmentStart, sampleIndex);
+    const promptMatches = sampleBlock.match(/"prompt": "Complete:/g) || [];
+    assert.equal(promptMatches.length, count);
+  }
+
+  assert.ok(quickLessonClozeMigration.includes("add column if not exists questions jsonb"));
+  assert.match(quickLessonClozeMigration, /A1=2, A2=3, B1=4, B2=5/);
+  assert.equal(
+    (quickLessonClozeMigration.match(/update public\.quick_lessons set/g) || []).length,
+    800,
+  );
+  assert.ok((quickLessonClozeMigration.match(/___/g) || []).length >= 2800);
 });
 
 test("dashboard calcula sequência, semana e progresso diário com atividades reais", () => {

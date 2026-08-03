@@ -125,10 +125,27 @@ begin
   if exists (
     select 1
     from public.quick_lessons
-    where level in ('B1', 'B2')
+    where is_published
       and (
-        jsonb_array_length(options) <> 4
-        or question in (
+        (level = 'A1' and jsonb_array_length(questions) <> 2)
+        or (level = 'A2' and jsonb_array_length(questions) <> 3)
+        or (level = 'B1' and jsonb_array_length(questions) <> 4)
+        or (level = 'B2' and jsonb_array_length(questions) <> 5)
+      )
+  ) then
+    raise exception 'Quick lesson failure: expected A1=2, A2=3, B1=4, B2=5 cloze questions';
+  end if;
+
+  if exists (
+    select 1
+    from public.quick_lessons lesson
+    cross join lateral jsonb_array_elements(lesson.questions) as question(value)
+    where lesson.is_published
+      and (
+        coalesce(question.value ->> 'prompt', '') not like '%___%'
+        or (lesson.level in ('A1', 'A2') and jsonb_array_length(question.value -> 'options') <> 3)
+        or (lesson.level in ('B1', 'B2') and jsonb_array_length(question.value -> 'options') <> 4)
+        or question.value ->> 'prompt' in (
           'What helped Maya reach the goal?',
           'What helped Leo reach the goal?',
           'What helped Nina reach the goal?',
@@ -136,7 +153,43 @@ begin
         )
       )
   ) then
-    raise exception 'Advanced quick lesson failure: B1/B2 questions remain literal or trivial';
+    raise exception 'Quick lesson failure: questions must be topic-aligned cloze prompts';
+  end if;
+
+  if (
+    select count(*)
+    from public.reading_passages
+    where is_published
+  ) <> 160 then
+    raise exception 'Reading catalog failure: expected 160 passages';
+  end if;
+
+  if exists (
+    select 1
+    from public.reading_passages
+    where is_published
+      and (
+        (level = 'A1' and jsonb_array_length(questions) <> 3)
+        or (level = 'A2' and jsonb_array_length(questions) <> 4)
+        or (level = 'B1' and jsonb_array_length(questions) <> 6)
+        or (level = 'B2' and jsonb_array_length(questions) <> 8)
+      )
+  ) then
+    raise exception 'Reading failure: expected A1=3, A2=4, B1=6, B2=8 cloze questions';
+  end if;
+
+  if exists (
+    select 1
+    from public.reading_passages passage
+    cross join lateral jsonb_array_elements(passage.questions) as question(value)
+    where passage.is_published
+      and (
+        coalesce(question.value ->> 'prompt', '') not like '%___%'
+        or (passage.level in ('A1', 'A2') and jsonb_array_length(question.value -> 'options') <> 3)
+        or (passage.level in ('B1', 'B2') and jsonb_array_length(question.value -> 'options') <> 4)
+      )
+  ) then
+    raise exception 'Reading failure: questions must be text-aligned cloze prompts';
   end if;
 
 end;
